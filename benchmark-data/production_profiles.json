@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "key": "collie-search",
+      "description": "Benchmark profile for Collie's own repository.",
+      "default_repo_relpath": ".",
+      "repo_names": ["collie-search"],
+      "repo_origin_substrings": [],
+      "min_tracked_files": 0,
+      "max_tracked_files": 1000,
+      "lexical_queries": [
+        "index",
+        "search",
+        "builder",
+        "tantivy",
+        "search%",
+        "%index",
+        "%file%"
+      ],
+      "symbol_queries": [
+        "kind:struct collie config",
+        "kind:struct tantivy index",
+        "kind:method qname:GenerationManager::activate",
+        "kind:method path:src/indexer/ search pattern",
+        "kind:method path:src/indexer/ index content"
+      ],
+      "regex_queries": [
+        "fn\\s+\\w+search",
+        "impl.*for.*Index",
+        "TODO|FIXME|HACK"
+      ],
+      "incremental_candidates": [
+        "src/storage/tantivy_index.rs",
+        "src/daemon/mod.rs",
+        "src/indexer/builder.rs"
+      ]
+    },
+    {
+      "key": "kubernetes",
+      "description": "Benchmark profile for kubernetes/kubernetes-scale repositories.",
+      "default_repo_relpath": "../large-repo-for-test",
+      "repo_names": ["large-repo-for-test", "kubernetes"],
+      "repo_origin_substrings": ["kubernetes/kubernetes"],
+      "min_tracked_files": 10000,
+      "max_tracked_files": null,
+      "lexical_queries": [
+        "kubelet",
+        "context",
+        "handler",
+        "controller",
+        "kube%",
+        "handle%",
+        "%config",
+        "%request%"
+      ],
+      "symbol_queries": [
+        "kind:fn handler",
+        "kind:struct SharedInformerFactory",
+        "kind:fn path:pkg/ init",
+        "kind:method qname:HollowKubelet::Run",
+        "kind:fn validate webhook"
+      ],
+      "regex_queries": [
+        "func\\s+\\w+Handler",
+        "interface\\s*\\{",
+        "TODO|FIXME|HACK",
+        "context\\.Context",
+        "errors?\\.New\\("
+      ],
+      "incremental_candidates": [
+        "pkg/probe/dialer_others.go",
+        "pkg/probe/exec/exec.go",
+        "cmd/kubelet/app/server.go"
+      ]
+    },
+    {
+      "key": "generic-small",
+      "description": "Fallback profile for small repositories.",
+      "repo_names": [],
+      "repo_origin_substrings": [],
+      "min_tracked_files": 0,
+      "max_tracked_files": 1000,
+      "lexical_queries": [
+        "config",
+        "search",
+        "build",
+        "path%",
+        "%file%"
+      ],
+      "symbol_queries": [
+        "kind:fn init",
+        "kind:struct Config",
+        "kind:fn handle request"
+      ],
+      "regex_queries": [
+        "fn\\s+\\w+",
+        "TODO|FIXME"
+      ],
+      "incremental_candidates": [
+        "src/main.rs",
+        "src/lib.rs",
+        "main.go"
+      ]
+    },
+    {
+      "key": "generic-large",
+      "description": "Fallback profile for large repositories.",
+      "repo_names": [],
+      "repo_origin_substrings": [],
+      "min_tracked_files": 1001,
+      "max_tracked_files": null,
+      "lexical_queries": [
+        "config",
+        "handler",
+        "server",
+        "init%",
+        "%request%"
+      ],
+      "symbol_queries": [
+        "kind:fn init",
+        "kind:fn handle request",
+        "kind:struct Config"
+      ],
+      "regex_queries": [
+        "func\\s+\\w+",
+        "TODO|FIXME|HACK"
+      ],
+      "incremental_candidates": [
+        "src/main.rs",
+        "main.go",
+        "app/main.py"
+      ]
+    }
+  ]
+}

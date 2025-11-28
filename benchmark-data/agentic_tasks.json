@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "collie.resolve-worktree-root",
+      "repo": "collie-search",
+      "prompt": "find the function that resolves the worktree root before daemon operations",
+      "expected_paths": ["src/daemon/mod.rs"],
+      "collie_symbol_queries": [
+        "kind:fn path:src/daemon/ %worktree%",
+        "kind:fn path:src/daemon/ %resolve%"
+      ],
+      "collie_lexical_queries": [
+        "worktree",
+        "resolve_worktree_root"
+      ],
+      "rg_regex_queries": [
+        "worktree",
+        "resolve_.*worktree"
+      ]
+    },
+    {
+      "id": "collie.extract-snippets",
+      "repo": "collie-search",
+      "prompt": "find the snippet extraction logic used by CLI search output",
+      "expected_paths": ["src/cli/search.rs"],
+      "collie_symbol_queries": [
+        "kind:fn path:src/cli/ %snippet%",
+        "kind:fn path:src/cli/ %extract%"
+      ],
+      "collie_lexical_queries": [
+        "snippet",
+        "extract_snippets"
+      ],
+      "rg_regex_queries": [
+        "snippet",
+        "extract_.*snippet"
+      ]
+    },
+    {
+      "id": "collie.activate-generation",
+      "repo": "collie-search",
+      "prompt": "find where a rebuilt generation gets activated",
+      "expected_paths": ["src/storage/generation.rs"],
+      "collie_symbol_queries": [
+        "kind:method path:src/storage/ qname:GenerationManager::activate",
+        "kind:method path:src/storage/ %activ%"
+      ],
+      "collie_lexical_queries": [
+        "activate generation",
+        "activate("
+      ],
+      "rg_regex_queries": [
+        "activate",
+        "generation"
+      ]
+    },
+    {
+      "id": "collie.watcher-start",
+      "repo": "collie-search",
+      "prompt": "find the watcher startup entrypoint",
+      "expected_paths": ["src/watcher/mod.rs"],
+      "collie_symbol_queries": [
+        "kind:fn path:src/watcher/ start",
+        "kind:fn path:src/watcher/ %watch%"
+      ],
+      "collie_lexical_queries": [
+        "watcher start",
+        "fn start("
+      ],
+      "rg_regex_queries": [
+        "fn start",
+        "watch"
+      ]
+    },
+    {
+      "id": "collie.parse-query",
+      "repo": "collie-search",
+      "prompt": "find the symbol query parser",
+      "expected_paths": ["src/symbols/query.rs"],
+      "collie_symbol_queries": [
+        "kind:fn path:src/symbols/ %query%",
+        "kind:fn path:src/symbols/ parse%"
+      ],
+      "collie_lexical_queries": [
+        "query parser",
+        "parse_query"
+      ],
+      "rg_regex_queries": [
+        "parse_query",
+        "query"
+      ]
+    },
+    {
+      "id": "kubernetes.hollow-kubelet-run",
+      "repo": "kubernetes",
+      "prompt": "find where the hollow kubelet actually runs",
+      "expected_paths": ["pkg/kubemark/hollow_kubelet.go"],
+      "collie_symbol_queries": [
+        "kind:method path:pkg/kubemark/ qname:HollowKubelet::Run",
+        "kind:method path:pkg/kubemark/ %run%"
+      ],
+      "collie_lexical_queries": [
+        "HollowKubelet Run",
+        "hollow kubelet run"
+      ],
+      "rg_regex_queries": [
+        "HollowKubelet",
+        "func \\(.*HollowKubelet.*\\) Run"
+      ]
+    },
+    {
+      "id": "kubernetes.webhook-token-authenticator",
+      "repo": "kubernetes",
+      "prompt": "find the webhook token authenticator constructor",
+      "expected_paths": ["pkg/kubeapiserver/authenticator/config.go"],
+      "collie_symbol_queries": [
+        "kind:fn path:pkg/kubeapiserver/authenticator/ %webhook%",
+        "kind:fn path:pkg/kubeapiserver/authenticator/ %authenticator%"
+      ],
+      "collie_lexical_queries": [
+        "webhook token authenticator",
+        "newWebhookTokenAuthenticator"
+      ],
+      "rg_regex_queries": [
+        "newWebhookTokenAuthenticator",
+        "WebhookTokenAuthn"
+      ]
+    },
+    {
+      "id": "kubernetes.authorization-validate",
+      "repo": "kubernetes",
+      "prompt": "find the authorization options validator",
+      "expected_paths": ["pkg/kubeapiserver/options/authorization.go"],
+      "collie_symbol_queries": [
+        "kind:method path:pkg/kubeapiserver/options/ %validate%",
+        "kind:fn path:pkg/kubeapiserver/options/ %auth%"
+      ],
+      "collie_lexical_queries": [
+        "authorization validate",
+        "Validate()"
+      ],
+      "rg_regex_queries": [
+        "func \\(.*Authorization.*\\) Validate",
+        "authorization.*Validate"
+      ]
+    },
+    {
+      "id": "kubernetes.shared-informer-factory",
+      "repo": "kubernetes",
+      "prompt": "find the shared informer factory constructor",
+      "expected_paths": ["staging/src/k8s.io/code-generator/examples/apiserver/informers/externalversions/factory.go"],
+      "collie_symbol_queries": [
+        "kind:fn %SharedInformerFactory%",
+        "kind:fn path:staging/src/k8s.io/code-generator/examples/apiserver/informers/externalversions/ %factory%"
+      ],
+      "collie_lexical_queries": [
+        "SharedInformerFactory",
+        "NewSharedInformerFactory"
+      ],
+      "rg_regex_queries": [
+        "NewSharedInformerFactory",
+        "SharedInformerFactory"
+      ]
+    },
+    {
+      "id": "kubernetes.pdb-validator",
+      "repo": "kubernetes",
+      "prompt": "find the pod disruption budget validator",
+      "expected_paths": ["pkg/apis/policy/validation/validation.go"],
+      "collie_symbol_queries": [
+        "kind:fn path:pkg/apis/policy/validation/ %validate%",
+        "kind:fn path:pkg/apis/policy/validation/ %disruption%"
+      ],
+      "collie_lexical_queries": [
+        "PodDisruptionBudget validate",
+        "ValidatePodDisruptionBudget"
+      ],
+      "rg_regex_queries": [
+        "ValidatePodDisruptionBudget",
+        "PodDisruptionBudget.*Validate"
+      ]
+    }
+  ]
+}

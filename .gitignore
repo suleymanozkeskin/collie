@@ -1,0 +1,10 @@
+/target
+.claude
+index.mmap
+.collie
+test-worktrees
+benchmark-results
+__pycache__
+*.pyc
+*.idea
+.env
