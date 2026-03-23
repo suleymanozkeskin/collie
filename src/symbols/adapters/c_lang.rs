@@ -34,24 +34,18 @@ impl LanguageAdapter for CAdapter {
 
 fn walk_c(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol>) {
     match node.kind() {
-        "function_definition" | "function_declarator" => {
-            if node.kind() == "function_definition" {
-                if let Some(declarator) = node.child_by_field_name("declarator") {
-                    if let Some(name_node) = find_identifier(&declarator) {
-                        symbols.push(make_symbol(
-                            SymbolKind::Function,
-                            text(name_node, source),
-                            path, node, source, None, None, "c",
-                        ));
-                    }
-                }
+        "function_definition" => {
+            if let Some(name) = extract_declarator_name(node, source) {
+                symbols.push(make_symbol(
+                    SymbolKind::Function, &name,
+                    path, node, source, None, None, "c",
+                ));
             }
         }
         "struct_specifier" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Struct,
-                    text(name_node, source),
+                    SymbolKind::Struct, text(name_node, source),
                     path, node, source, None, None, "c",
                 ));
             }
@@ -59,42 +53,33 @@ fn walk_c(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol>)
         "enum_specifier" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Enum,
-                    text(name_node, source),
+                    SymbolKind::Enum, text(name_node, source),
                     path, node, source, None, None, "c",
                 ));
             }
         }
         "type_definition" => {
-            if let Some(declarator) = node.child_by_field_name("declarator") {
-                if let Some(name_node) = find_identifier(&declarator) {
-                    symbols.push(make_symbol(
-                        SymbolKind::TypeAlias,
-                        text(name_node, source),
-                        path, node, source, None, None, "c",
-                    ));
-                }
+            if let Some(name) = extract_declarator_name(node, source) {
+                symbols.push(make_symbol(
+                    SymbolKind::TypeAlias, &name,
+                    path, node, source, None, None, "c",
+                ));
             }
         }
         "declaration" => {
-            // Top-level variable/constant declarations
             if node.parent().map_or(false, |p| p.kind() == "translation_unit") {
-                if let Some(declarator) = node.child_by_field_name("declarator") {
-                    if let Some(name_node) = find_identifier(&declarator) {
-                        symbols.push(make_symbol(
-                            SymbolKind::Variable,
-                            text(name_node, source),
-                            path, node, source, None, None, "c",
-                        ));
-                    }
+                if let Some(name) = extract_declarator_name(node, source) {
+                    symbols.push(make_symbol(
+                        SymbolKind::Variable, &name,
+                        path, node, source, None, None, "c",
+                    ));
                 }
             }
         }
         "preproc_def" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Constant,
-                    text(name_node, source),
+                    SymbolKind::Constant, text(name_node, source),
                     path, node, source, None, None, "c",
                 ));
             }
@@ -105,17 +90,63 @@ fn walk_c(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol>)
     for_each_child(node, |child| walk_c(child, source, path, symbols));
 }
 
-fn find_identifier<'a>(node: &Node<'a>) -> Option<Node<'a>> {
-    if node.kind() == "identifier" {
-        return Some(*node);
-    }
-    let count = node.child_count();
-    for i in 0..count {
-        if let Some(child) = node.child(i) {
-            if let Some(found) = find_identifier(&child) {
-                return Some(found);
+/// Walk down through declarator/function_declarator/pointer_declarator chains
+/// to find the actual identifier name.
+fn extract_declarator_name<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    let mut current = node.child_by_field_name("declarator")?;
+    // Walk through nested declarators: pointer_declarator → function_declarator → identifier
+    loop {
+        match current.kind() {
+            "identifier" | "type_identifier" | "field_identifier" => {
+                return Some(text(current, source));
+            }
+            _ => {
+                // Try the "declarator" field, or "name" field
+                if let Some(inner) = current.child_by_field_name("declarator") {
+                    current = inner;
+                } else if let Some(inner) = current.child_by_field_name("name") {
+                    current = inner;
+                } else {
+                    // Last resort: find first identifier child
+                    let count = current.child_count();
+                    for i in 0..count {
+                        if let Some(child) = current.child(i) {
+                            if child.kind() == "identifier" {
+                                return Some(text(child, source));
+                            }
+                        }
+                    }
+                    return None;
+                }
             }
         }
     }
-    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::symbols::adapters::LanguageAdapter;
+
+    #[test]
+    fn c_extracts_functions() {
+        let adapter = CAdapter;
+        let content = "void handle_request(int fd) { }\nint main() { return 0; }";
+        let symbols = adapter.extract_symbols(Path::new("main.c"), content);
+        let fns: Vec<_> = symbols.iter().filter(|s| s.kind == SymbolKind::Function).collect();
+        assert!(!fns.is_empty(), "should find at least one function, got: {:?}",
+            symbols.iter().map(|s| format!("{:?} {}", s.kind, s.name)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn c_extracts_structs() {
+        let adapter = CAdapter;
+        let symbols = adapter.extract_symbols(
+            Path::new("main.c"),
+            "struct Config { int port; };",
+        );
+        let structs: Vec<_> = symbols.iter().filter(|s| s.kind == SymbolKind::Struct).collect();
+        assert_eq!(structs.len(), 1);
+        assert_eq!(structs[0].name, "Config");
+    }
 }

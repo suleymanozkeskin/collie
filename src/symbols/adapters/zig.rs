@@ -34,49 +34,55 @@ impl LanguageAdapter for ZigAdapter {
 
 fn walk_zig(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol>) {
     match node.kind() {
-        "FnProto" => {
+        "function_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
-                let vis = if has_pub_prefix(node, source) {
-                    Some("pub")
-                } else {
-                    Some("private")
-                };
+                let vis = if is_pub(node, source) { Some("pub") } else { Some("private") };
                 symbols.push(make_symbol(
                     SymbolKind::Function, text(name_node, source),
                     path, node, source, None, vis, "zig",
                 ));
             }
         }
-        "TestDecl" => {
-            // test "name" { ... }
-            if let Some(name_node) = node.child_by_field_name("name") {
-                symbols.push(make_symbol(
-                    SymbolKind::Function, text(name_node, source),
-                    path, node, source, None, None, "zig",
-                ));
+        "test_declaration" => {
+            // test "name" { ... } — find the string child
+            let count = node.child_count();
+            for i in 0..count {
+                if let Some(child) = node.child(i) {
+                    if child.kind() == "string" {
+                        let name = text(child, source).trim_matches('"');
+                        if !name.is_empty() {
+                            symbols.push(make_symbol(
+                                SymbolKind::Function, name,
+                                path, node, source, None, None, "zig",
+                            ));
+                        }
+                        break;
+                    }
+                }
             }
         }
-        "VarDecl" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
+        "variable_declaration" => {
+            // Find the identifier child (not a named field)
+            if let Some(name) = find_child_identifier(node, source) {
                 let snippet = text(node, source);
-                let kind = if snippet.trim_start().starts_with("const") {
-                    SymbolKind::Constant
+                let (kind, vis) = if snippet.trim_start().starts_with("pub ") {
+                    if snippet.contains("const ") {
+                        (SymbolKind::Constant, Some("pub"))
+                    } else {
+                        (SymbolKind::Variable, Some("pub"))
+                    }
+                } else if snippet.trim_start().starts_with("const ")
+                    || snippet.contains(" const ")
+                {
+                    (SymbolKind::Constant, Some("private"))
                 } else {
-                    SymbolKind::Variable
-                };
-                let vis = if has_pub_prefix(node, source) {
-                    Some("pub")
-                } else {
-                    Some("private")
+                    (SymbolKind::Variable, Some("private"))
                 };
                 symbols.push(make_symbol(
-                    kind, text(name_node, source),
+                    kind, name,
                     path, node, source, None, vis, "zig",
                 ));
             }
-        }
-        "ContainerDecl" | "ContainerDeclType" => {
-            // struct, enum, union — the name comes from the parent VarDecl
         }
         _ => {}
     }
@@ -84,7 +90,18 @@ fn walk_zig(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol
     for_each_child(node, |child| walk_zig(child, source, path, symbols));
 }
 
-fn has_pub_prefix(node: Node<'_>, source: &[u8]) -> bool {
-    let snippet = text(node, source);
-    snippet.trim_start().starts_with("pub ")
+fn is_pub(node: Node<'_>, source: &[u8]) -> bool {
+    text(node, source).trim_start().starts_with("pub ")
+}
+
+fn find_child_identifier<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    let count = node.child_count();
+    for i in 0..count {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "identifier" {
+                return Some(text(child, source));
+            }
+        }
+    }
+    None
 }

@@ -6,6 +6,8 @@ It runs as a background daemon that watches for file changes and keeps the index
 
 Install: `cargo install collie-search` (installs the `collie` command).
 
+Teach your agent, all they have to run is `collie skill`
+
 ## Setup
 
 ```sh
