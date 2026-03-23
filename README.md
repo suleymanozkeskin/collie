@@ -3,6 +3,14 @@
 Collie indexes source files and provides near-instant search over large codebases.
 It runs as a background daemon that watches for file changes and keeps the index current.
 
+## Install
+
+```sh
+cargo install collie-search
+```
+
+This installs the `collie` command.
+
 ## Setup
 
 ```sh

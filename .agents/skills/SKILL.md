@@ -8,6 +8,8 @@ description: How to use collie for fast, index-backed code search in this reposi
 Collie indexes source files and provides near-instant search over large codebases.
 It runs as a background daemon that watches for file changes and keeps the index current.
 
+Install: `cargo install collie-search` (installs the `collie` command).
+
 ## Setup
 
 ```sh
