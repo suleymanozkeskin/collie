@@ -1,0 +1,1678 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Collie - Index-Backed Code Search</title>
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css"
+        />
+        <style>
+            :root {
+                --collie-orange: #ff8c42;
+                --collie-blue: #4ecdc4;
+                --collie-green: #a8e6cf;
+                --collie-red: #ff6b6b;
+                --collie-purple: #c3a6ff;
+                --collie-dim: #aaa;
+            }
+
+            .reveal {
+                font-family:
+                    "Inter",
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    sans-serif;
+            }
+
+            /* Uniform slide content box */
+            .reveal .slides section {
+                box-sizing: border-box;
+                padding: 40px 60px !important;
+                height: 100% !important;
+                display: flex !important;
+                flex-direction: column !important;
+                justify-content: center !important;
+                align-items: center !important;
+                text-align: center;
+            }
+
+            .reveal .slides section > * {
+                max-width: 960px;
+                width: 100%;
+                flex-shrink: 0;
+            }
+
+            .reveal h1,
+            .reveal h2,
+            .reveal h3 {
+                text-transform: none;
+                font-weight: 700;
+                letter-spacing: -0.02em;
+            }
+
+            .reveal h1 {
+                font-size: 2.8em;
+            }
+            .reveal h2 {
+                font-size: 1.8em;
+                margin-bottom: 0.6em;
+            }
+            .reveal h3 {
+                font-size: 1.3em;
+            }
+
+            .reveal .section-label + h2 {
+                margin-top: 0.1em;
+                font-size: 1.5em;
+            }
+
+            .reveal .accent {
+                color: var(--collie-orange);
+            }
+            .reveal .blue {
+                color: var(--collie-blue);
+            }
+            .reveal .green {
+                color: var(--collie-green);
+            }
+            .reveal .red {
+                color: var(--collie-red);
+            }
+            .reveal .purple {
+                color: var(--collie-purple);
+            }
+            .reveal .dim {
+                color: var(--collie-dim);
+            }
+
+            .reveal .hero-title {
+                font-size: 3em;
+                font-weight: 800;
+                letter-spacing: -0.04em;
+                margin-bottom: 0;
+            }
+
+            .reveal .subtitle {
+                font-size: 1.1em;
+                color: var(--collie-dim);
+                margin-top: 0.2em;
+                font-weight: 400;
+            }
+
+            .reveal .big-number {
+                font-size: 3em;
+                font-weight: 800;
+                line-height: 1;
+                margin: 0.1em 0;
+            }
+
+            .reveal .medium-number {
+                font-size: 2.5em;
+                font-weight: 700;
+                line-height: 1;
+            }
+
+            .reveal table {
+                margin: 0.5em auto;
+                border-collapse: collapse;
+                font-size: 0.7em;
+            }
+
+            .reveal table th {
+                color: var(--collie-orange);
+                border-bottom: 2px solid var(--collie-orange);
+                padding: 0.5em 1em;
+                text-align: left;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
+            .reveal table td {
+                padding: 0.4em 1em;
+                border-bottom: 1px solid #333;
+            }
+
+            .reveal table td.num {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .reveal .speedup {
+                color: var(--collie-green);
+                font-weight: 700;
+            }
+
+            .reveal .vs-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 2em;
+                text-align: left;
+                margin-top: 1em;
+            }
+
+            .reveal .vs-grid .panel {
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 12px;
+                padding: 1.2em 1.5em;
+            }
+
+            .reveal .vs-grid .panel h3 {
+                margin-top: 0;
+                font-size: 1.1em;
+            }
+
+            .reveal .modes-terminal {
+                background: #0d0d0d;
+                border-radius: 10px;
+                overflow: hidden;
+                text-align: left;
+                margin-top: 0.8em;
+                border: 1px solid #2a2a2a;
+            }
+
+            .reveal .modes-term-bar {
+                background: #1a1a1a;
+                padding: 0.35em 0.8em;
+                display: flex;
+                gap: 0.4em;
+                align-items: center;
+            }
+
+            .reveal .modes-term-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                display: inline-block;
+            }
+
+            .reveal .modes-term-body {
+                padding: 0.3em 1em 0.5em;
+            }
+
+            .reveal .modes-section {
+                margin: 0.2em 0;
+            }
+
+            .reveal .modes-label {
+                font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+                font-size: 0.5em;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                margin-bottom: 0.1em;
+            }
+
+            .reveal .modes-desc {
+                font-size: 0.4em;
+                color: #ccc;
+                margin-bottom: 0.15em;
+            }
+
+            .reveal .modes-desc code {
+                background: rgba(255, 255, 255, 0.08);
+                padding: 0.1em 0.35em;
+                border-radius: 3px;
+                font-size: 0.95em;
+                color: #ccc;
+            }
+
+            .reveal .modes-pre {
+                font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+                font-size: 0.38em;
+                line-height: 1.5;
+                margin: 0;
+                padding: 0;
+                background: none;
+                border: none;
+                box-shadow: none;
+                color: #e0e0e0;
+                white-space: pre;
+            }
+
+            .reveal .modes-prompt {
+                color: #bbb;
+                user-select: none;
+            }
+
+            .reveal .modes-divider {
+                border-top: 1px solid #222;
+                margin: 0.5em 0;
+            }
+
+            .reveal .bar-chart {
+                margin: 1em auto;
+                max-width: 800px;
+            }
+
+            .reveal .bar-row {
+                display: grid;
+                grid-template-columns: 120px 1fr 80px;
+                align-items: center;
+                margin: 0.4em 0;
+                font-size: 0.75em;
+            }
+
+            .reveal .bar-label {
+                text-align: right;
+                padding-right: 1em;
+                font-weight: 600;
+            }
+
+            .reveal .bar-track {
+                background: rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                height: 32px;
+                overflow: hidden;
+            }
+
+            .reveal .bar-fill {
+                height: 100%;
+                border-radius: 6px;
+                display: flex;
+                align-items: center;
+                padding-left: 0.8em;
+                font-size: 0.85em;
+                font-weight: 600;
+                transition: width 0.8s ease;
+            }
+
+            .reveal .bar-fill.collie {
+                background: var(--collie-orange);
+            }
+            .reveal .bar-fill.rg {
+                background: #555;
+            }
+            .reveal .bar-fill.grep {
+                background: #333;
+            }
+
+            .reveal .bar-value {
+                padding-left: 1em;
+                font-variant-numeric: tabular-nums;
+                color: var(--collie-dim);
+            }
+
+            .reveal .feature-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 1em;
+                margin-top: 1em;
+                text-align: left;
+                font-size: 0.75em;
+            }
+
+            .reveal .feature-item {
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 10px;
+                padding: 1em 1.2em;
+                border-left: 3px solid var(--collie-blue);
+            }
+
+            .reveal .feature-item h4 {
+                margin: 0 0 0.3em 0;
+                color: var(--collie-blue);
+                font-size: 1em;
+            }
+
+            .reveal .feature-item p {
+                margin: 0;
+                color: #bbb;
+            }
+
+            .reveal .install-cmd {
+                background: rgba(255, 140, 66, 0.1);
+                border: 1px solid var(--collie-orange);
+                border-radius: 12px;
+                padding: 0.5em 1.5em;
+                display: inline-block;
+                font-size: 1em;
+                margin: 0.5em 0;
+            }
+
+            .reveal .install-cmd code {
+                color: var(--collie-orange);
+                font-weight: 600;
+            }
+
+            .reveal .stat-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
+                gap: 1.5em;
+                margin: 1em 0;
+            }
+
+            .reveal .stat-box {
+                text-align: center;
+            }
+
+            .reveal .stat-box .num {
+                font-size: 2em;
+                font-weight: 800;
+                color: var(--collie-orange);
+                line-height: 1;
+            }
+
+            .reveal .stat-box .label {
+                font-size: 0.65em;
+                color: var(--collie-dim);
+                margin-top: 0.3em;
+            }
+
+            .reveal pre {
+                font-size: 0.5em;
+                box-shadow: none;
+                background: rgba(0, 0, 0, 0.5);
+                border-radius: 10px;
+            }
+
+            .reveal pre code {
+                padding: 1em;
+                line-height: 1.5;
+            }
+
+            .reveal .agentic-table td:nth-child(2),
+            .reveal .agentic-table td:nth-child(3),
+            .reveal .agentic-table td:nth-child(4) {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .reveal .section-label {
+                font-size: 0.6em;
+                text-transform: uppercase;
+                letter-spacing: 0.15em;
+                color: var(--collie-orange);
+                margin-bottom: 0;
+            }
+
+            .reveal .fragment.highlight-row td {
+                transition: background 0.3s;
+            }
+
+            .reveal .fragment.highlight-row.visible td {
+                background: rgba(255, 140, 66, 0.15);
+            }
+
+            /* ========== Slide 2: The Problem ========== */
+            .reveal .problem-stack {
+                max-width: 700px;
+                margin: 0 auto;
+            }
+
+            .reveal .problem-row {
+                display: grid;
+                grid-template-columns: 1fr auto auto;
+                align-items: center;
+                gap: 1.2em;
+                padding: 0.55em 1em;
+                border-bottom: 1px solid #222;
+                font-size: 0.7em;
+            }
+
+            .reveal .problem-row:last-child {
+                border-bottom: none;
+            }
+
+            .reveal .problem-row-collie {
+                background: rgba(255, 140, 66, 0.06);
+                border-radius: 8px;
+                border-bottom: none;
+                margin-top: 0.3em;
+            }
+
+            .reveal .problem-cmd code {
+                font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+                font-size: 0.95em;
+                color: #ccc;
+            }
+
+            .reveal .problem-row-collie .problem-cmd code {
+                color: #e8e8e8;
+            }
+
+            .reveal .problem-time {
+                font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+                font-weight: 700;
+                font-size: 1.1em;
+                min-width: 80px;
+                text-align: right;
+            }
+
+            .reveal .problem-slow {
+                color: #777;
+            }
+
+            .reveal .problem-fast {
+                color: var(--collie-orange);
+            }
+
+            .reveal .problem-note {
+                font-size: 0.8em;
+                color: #bbb;
+                min-width: 180px;
+            }
+
+            .reveal .problem-row-collie .problem-note {
+                color: #ccc;
+            }
+
+            /* ========== Slide 12: Agent layout ========== */
+            .reveal .agent-layout {
+                display: grid;
+                grid-template-columns: 1fr 1.2fr;
+                gap: 1.5em;
+                align-items: start;
+                margin-top: 0.8em;
+            }
+
+            .reveal .agent-points {
+                text-align: left;
+            }
+
+            .reveal .agent-point {
+                margin-bottom: 0.7em;
+            }
+
+            .reveal .agent-point-key {
+                font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+                font-size: 0.55em;
+                font-weight: 700;
+                color: var(--collie-blue);
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }
+
+            .reveal .agent-point-val {
+                font-size: 0.52em;
+                color: #aaa;
+                margin-top: 0.15em;
+            }
+
+            .reveal .agent-point-val code {
+                background: rgba(255, 255, 255, 0.07);
+                padding: 0.1em 0.3em;
+                border-radius: 3px;
+                font-size: 0.95em;
+                color: #ccc;
+            }
+
+            .reveal .agent-demo {
+                border-radius: 10px;
+                overflow: hidden;
+                border: 1px solid #2a2a2a;
+            }
+
+            /* ========== Slide 13: Architecture pipeline ========== */
+            .reveal .arch-pipeline {
+                max-width: 600px;
+                margin: 0.8em auto 0;
+            }
+
+            .reveal .arch-stage {
+                margin-bottom: 0.1em;
+            }
+
+            .reveal .arch-box {
+                display: grid;
+                grid-template-columns: 130px 1fr;
+                align-items: center;
+                gap: 0.8em;
+                padding: 0.3em 0;
+                font-size: 0.65em;
+            }
+
+            .reveal .arch-lib {
+                font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+                font-weight: 700;
+                text-align: right;
+            }
+
+            .reveal .arch-what {
+                color: #ccc;
+                font-size: 0.9em;
+            }
+
+            .reveal .arch-arrow {
+                text-align: center;
+                color: #444;
+                font-size: 0.7em;
+                line-height: 1;
+                padding: 0.15em 0;
+            }
+
+            .reveal .arch-icon {
+                text-align: center;
+                font-size: 0.65em;
+                color: #bbb;
+                font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+            }
+
+            /* ========== Slide 10: Agentic compare ========== */
+            .reveal .agentic-compare {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 1.5em;
+                text-align: left;
+                margin-top: 0.5em;
+            }
+
+            .reveal .agentic-side {
+                background: rgba(255, 255, 255, 0.03);
+                border-radius: 8px;
+                padding: 0.8em 1em;
+            }
+
+            /* ========== Slide 15: Index table ========== */
+            .reveal .index-table {
+                font-size: 0.75em;
+            }
+
+            .reveal .index-table td:first-child {
+                text-align: left;
+            }
+
+            /* ========== RESPONSIVE: tablets / small laptops ========== */
+            @media (max-width: 1024px) {
+                .reveal .problem-row {
+                    font-size: 0.6em;
+                    gap: 0.8em;
+                }
+                .reveal .problem-note {
+                    display: none;
+                }
+                .reveal .agent-layout {
+                    grid-template-columns: 1fr;
+                    gap: 1em;
+                }
+                .reveal .arch-box {
+                    font-size: 0.58em;
+                    grid-template-columns: 100px 1fr;
+                }
+                .reveal h1 {
+                    font-size: 2.2em;
+                }
+                .reveal h2 {
+                    font-size: 1.5em;
+                }
+                .reveal .hero-title {
+                    font-size: 3em;
+                }
+                .reveal .subtitle {
+                    font-size: 1.1em;
+                }
+                .reveal .big-number {
+                    font-size: 3em;
+                }
+                .reveal .medium-number {
+                    font-size: 2em;
+                }
+                .reveal .stat-box .num {
+                    font-size: 2em;
+                }
+                .reveal .install-cmd {
+                    font-size: 1em;
+                    padding: 0.8em 1.5em;
+                }
+                .reveal .modes-pre {
+                    font-size: 0.42em;
+                }
+                .reveal .modes-desc {
+                    font-size: 0.46em;
+                }
+                .reveal table {
+                    font-size: 0.6em;
+                }
+                .reveal table th,
+                .reveal table td {
+                    padding: 0.35em 0.6em;
+                }
+                .reveal .bar-row {
+                    grid-template-columns: 90px 1fr 70px;
+                    font-size: 0.65em;
+                }
+                .reveal .bar-chart {
+                    max-width: 600px;
+                }
+                .reveal pre {
+                    font-size: 0.48em;
+                }
+            }
+
+            /* ========== RESPONSIVE: phones / narrow viewports ========== */
+            @media (max-width: 600px) {
+                .reveal h1 {
+                    font-size: 1.6em;
+                }
+                .reveal h2 {
+                    font-size: 1.2em;
+                }
+                .reveal h3 {
+                    font-size: 1em;
+                }
+                .reveal .hero-title {
+                    font-size: 2.2em;
+                }
+                .reveal .subtitle {
+                    font-size: 0.85em;
+                }
+                .reveal .big-number {
+                    font-size: 2.2em;
+                }
+                .reveal .medium-number {
+                    font-size: 1.6em;
+                }
+                .reveal .stat-box .num {
+                    font-size: 1.6em;
+                }
+                .reveal .stat-box .label {
+                    font-size: 0.55em;
+                }
+                .reveal .install-cmd {
+                    font-size: 0.75em;
+                    padding: 0.6em 1em;
+                    border-radius: 8px;
+                }
+                .reveal .section-label {
+                    font-size: 0.45em;
+                }
+
+                /* Stack all grids to single column */
+                .reveal .vs-grid {
+                    grid-template-columns: 1fr;
+                    gap: 1em;
+                }
+                .reveal .problem-row {
+                    grid-template-columns: 1fr auto;
+                    font-size: 0.55em;
+                    gap: 0.5em;
+                }
+                .reveal .problem-note {
+                    display: none;
+                }
+                .reveal .agent-layout {
+                    grid-template-columns: 1fr;
+                }
+                .reveal .agent-point-key {
+                    font-size: 0.48em;
+                }
+                .reveal .agent-point-val {
+                    font-size: 0.45em;
+                }
+                .reveal .arch-box {
+                    grid-template-columns: 80px 1fr;
+                    font-size: 0.55em;
+                    gap: 0.5em;
+                }
+                .reveal .modes-term-body {
+                    padding: 0.5em 0.8em 0.8em;
+                }
+                .reveal .modes-pre {
+                    font-size: 0.36em;
+                    overflow-x: auto;
+                }
+                .reveal .modes-desc {
+                    font-size: 0.42em;
+                }
+                .reveal .modes-label {
+                    font-size: 0.55em;
+                }
+                .reveal .stat-row {
+                    grid-template-columns: 1fr;
+                    gap: 0.8em;
+                }
+                .reveal .feature-grid {
+                    grid-template-columns: 1fr;
+                    gap: 0.6em;
+                    font-size: 0.65em;
+                }
+                .reveal .feature-item {
+                    padding: 0.7em 0.9em;
+                }
+
+                /* Tables: smaller text + horizontal scroll */
+                .reveal table {
+                    font-size: 0.5em;
+                    display: block;
+                    overflow-x: auto;
+                    white-space: nowrap;
+                    -webkit-overflow-scrolling: touch;
+                }
+                .reveal table th,
+                .reveal table td {
+                    padding: 0.3em 0.5em;
+                }
+
+                /* Bar chart */
+                .reveal .bar-chart {
+                    max-width: 100%;
+                }
+                .reveal .bar-row {
+                    grid-template-columns: 70px 1fr 60px;
+                    font-size: 0.6em;
+                }
+                .reveal .bar-track {
+                    height: 24px;
+                }
+
+                /* Code blocks */
+                .reveal pre {
+                    font-size: 0.4em;
+                }
+                .reveal pre code {
+                    padding: 0.7em;
+                }
+
+                /* Panels */
+                .reveal .vs-grid .panel {
+                    padding: 0.8em 1em;
+                }
+                .reveal .vs-grid .panel p {
+                    font-size: 0.6em !important;
+                }
+                .reveal .vs-grid .panel h3 {
+                    font-size: 0.9em;
+                }
+
+                /* Languages slide */
+                .reveal section p[style*="line-height: 2"] {
+                    font-size: 0.8em !important;
+                    line-height: 1.6 !important;
+                }
+            }
+
+            /* ========== RESPONSIVE: very small phones ========== */
+            @media (max-width: 400px) {
+                .reveal .hero-title {
+                    font-size: 1.8em;
+                }
+                .reveal h2 {
+                    font-size: 1em;
+                }
+                .reveal .big-number {
+                    font-size: 1.8em;
+                }
+                .reveal .medium-number {
+                    font-size: 1.3em;
+                }
+                .reveal .stat-box .num {
+                    font-size: 1.3em;
+                }
+                .reveal .install-cmd {
+                    font-size: 0.65em;
+                    padding: 0.5em 0.8em;
+                }
+                .reveal .bar-row {
+                    grid-template-columns: 55px 1fr 50px;
+                    font-size: 0.5em;
+                }
+                .reveal table {
+                    font-size: 0.42em;
+                }
+                .reveal pre {
+                    font-size: 0.35em;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="reveal">
+            <div class="slides">
+                <!-- ==================== TITLE ==================== -->
+                <section>
+                    <div class="hero-title">
+                        <span class="accent">collie</span>
+                    </div>
+                    <div class="subtitle">
+                        Incrementally indexed code search.<br />
+                        Specialized for your projects.<br />Faster than grep /
+                        ripgrep.
+                    </div>
+                    <div class="install-cmd">
+                        <code>cargo install collie-search</code>
+                    </div>
+                    <p class="dim" style="font-size: 0.6em">
+                        github.com/suleymanozkeskin/collie
+                    </p>
+                </section>
+
+                <!-- ==================== THE PROBLEM ==================== -->
+                <section>
+                    <h2>Search doesn't scale</h2>
+                    <p
+                        style="
+                            font-size: 0.7em;
+                            color: #ccc;
+                            margin-bottom: 0.6em;
+                        "
+                    >
+                        ripgrep on a 29K-file repo (Kubernetes). Every query
+                        re-scans every file.
+                    </p>
+                    <div class="problem-stack">
+                        <div class="problem-row">
+                            <div class="problem-cmd">
+                                <code
+                                    ><span class="modes-prompt">$</span> rg -l
+                                    "kubelet"</code
+                                >
+                            </div>
+                            <div class="problem-time problem-slow">690 ms</div>
+                            <div class="problem-note">
+                                Full scan, every time
+                            </div>
+                        </div>
+                        <div class="problem-row">
+                            <div class="problem-cmd">
+                                <code
+                                    ><span class="modes-prompt">$</span> rg -l
+                                    "context"</code
+                                >
+                            </div>
+                            <div class="problem-time problem-slow">612 ms</div>
+                            <div class="problem-note">
+                                Same cost, different query
+                            </div>
+                        </div>
+                        <div class="problem-row problem-row-collie">
+                            <div class="problem-cmd">
+                                <code
+                                    ><span class="modes-prompt">$</span> collie
+                                    search "kubelet"</code
+                                >
+                            </div>
+                            <div class="problem-time problem-fast">12 ms</div>
+                            <div class="problem-note">Index lookup</div>
+                        </div>
+                    </div>
+                    <p
+                        style="
+                            font-size: 0.55em;
+                            color: #bbb;
+                            margin-top: 0.8em;
+                        "
+                    >
+                        grep/rg also have no understanding of code structure.
+                        Just raw text.
+                    </p>
+                </section>
+
+                <!-- ==================== WHAT IS COLLIE ==================== -->
+                <section>
+                    <h2>What is <span class="accent">Collie</span>?</h2>
+                    <p style="font-size: 0.85em">
+                        A <strong>lexical and structural search CLI</strong> that
+                        indexes your codebase once, keeps it current<br />while
+                        the daemon runs, and auto-stops when you're done.
+                    </p>
+                    <p style="font-size: 0.85em">
+                        Not a replacement for traditional search, specialized
+                        for agentic development, indexed per project / worktree.
+                    </p>
+                    <div class="stat-row">
+                        <div class="stat-box">
+                            <div class="num">~10ms</div>
+                            <div class="label">Search latency on 29K files</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="num">10</div>
+                            <div class="label">
+                                Languages with symbol extraction
+                            </div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="num">3</div>
+                            <div class="label">Search modes</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ==================== HOW IT WORKS ==================== -->
+                <section>
+                    <h2>How it works</h2>
+                    <div class="modes-terminal">
+                        <div class="modes-term-bar">
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ff5f56"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ffbd2e"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #27c93f"
+                            ></span>
+                        </div>
+                        <div class="modes-term-body">
+                            <pre
+                                class="modes-pre"
+                            ><span class="dim"># Start the daemon (indexes + watches for changes)</span>
+<span class="modes-prompt">$</span> collie watch .
+
+<span class="dim"># Search instantly</span>
+<span class="modes-prompt">$</span> collie search <span class="accent">"handler"</span>
+
+<span class="dim"># Stop when done (or auto-stops after 30min idle)</span>
+<span class="modes-prompt">$</span> collie stop .</pre>
+                        </div>
+                    </div>
+                    <p style="font-size: 0.6em; color: #ccc">
+                        Index once &rarr; query faster &rarr; incremental
+                        updates via FSEvents
+                    </p>
+                </section>
+
+                <!-- ==================== THREE SEARCH MODES ==================== -->
+                <section>
+                    <h2>Three search modes</h2>
+                    <div class="modes-terminal">
+                        <div class="modes-term-bar">
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ff5f56"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ffbd2e"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #27c93f"
+                            ></span>
+                        </div>
+                        <div class="modes-term-body">
+                            <div class="modes-section">
+                                <div class="modes-label accent">Token</div>
+                                <div class="modes-desc">
+                                    Keyword search with <code>%</code> wildcards
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search <span class="accent">"kube%"</span>           <span class="dim"># prefix</span>
+<span class="modes-prompt">$</span> collie search <span class="accent">"%config"</span>         <span class="dim"># suffix</span>
+<span class="modes-prompt">$</span> collie search <span class="accent">"handle request"</span>  <span class="dim"># multi-term AND</span></pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label blue">Symbol</div>
+                                <div class="modes-desc">
+                                    Structural queries via Tree-sitter. Filter
+                                    by <code>kind:</code> <code>lang:</code>
+                                    <code>path:</code> <code>qname:</code>
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn handler"</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:struct lang:go"</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:method qname:Server::run"</span></pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label purple">Regex</div>
+                                <div class="modes-desc">
+                                    Full regex, index-accelerated. Literal
+                                    fragments narrow files first.
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search -e <span class="purple">"func\s+\w+Handler"</span>
+<span class="modes-prompt">$</span> collie search -e <span class="purple">"TODO|FIXME|HACK"</span>  <span class="dim"># multi-pattern</span>
+<span class="modes-prompt">$</span> collie search -e <span class="purple">"impl.*Error"</span> -i  <span class="dim"># case-insensitive</span></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ==================== STRUCTURAL QUERIES ==================== -->
+                <section>
+                    <h2>Structural query vocabulary</h2>
+                    <div class="modes-terminal">
+                        <div class="modes-term-bar">
+                            <span class="modes-term-dot" style="background:#ff5f56"></span>
+                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
+                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                        </div>
+                        <div class="modes-term-body">
+                            <div class="modes-section">
+                                <div class="modes-label blue">Filters</div>
+                                <pre class="modes-pre"><span class="blue">kind:</span>fn|method|class|struct|enum|interface|trait
+     variable|field|property|constant|module|type|import
+<span class="blue">lang:</span>go|rust|python|typescript|c|cpp|java|csharp|ruby|zig
+<span class="blue">path:</span>src/api/              <span class="dim"># scope to directory</span>
+<span class="blue">qname:</span>Server::run          <span class="dim"># qualified name</span></pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label accent">Examples</div>
+                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn lang:go path:pkg/api/ init"</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:struct Config"</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:method qname:HollowKubelet::Run"</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:trait path:src/ %Error%"</span></pre>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="font-size: 0.55em; color: #ccc; margin-top: 0.5em;">
+                        14 symbol kinds. 10 languages. Powered by Tree-sitter AST parsing.
+                    </p>
+                </section>
+
+                <!-- ==================== BENCHMARK: LEXICAL ==================== -->
+                <section>
+                    <p class="section-label">
+                        Benchmark &mdash; Kubernetes repo, 28,903 files
+                    </p>
+                    <h2>
+                        Lexical search: <span class="accent">Collie</span> vs
+                        <span class="dim">ripgrep</span>
+                    </h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Query</th>
+                                <th>Collie</th>
+                                <th>ripgrep</th>
+                                <th>Speedup</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>kubelet</code></td>
+                                <td class="num">12 ms</td>
+                                <td class="num">690 ms</td>
+                                <td class="num speedup">57x</td>
+                            </tr>
+                            <tr>
+                                <td><code>context</code></td>
+                                <td class="num">12 ms</td>
+                                <td class="num">612 ms</td>
+                                <td class="num speedup">51x</td>
+                            </tr>
+                            <tr>
+                                <td><code>controller</code></td>
+                                <td class="num">9 ms</td>
+                                <td class="num">466 ms</td>
+                                <td class="num speedup">52x</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>kube%</code>
+                                    <span class="dim">(prefix)</span>
+                                </td>
+                                <td class="num">14 ms</td>
+                                <td class="num">871 ms</td>
+                                <td class="num speedup">63x</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>%config</code>
+                                    <span class="dim">(suffix)</span>
+                                </td>
+                                <td class="num">12 ms</td>
+                                <td class="num">480 ms</td>
+                                <td class="num speedup">40x</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>%request%</code>
+                                    <span class="dim">(substring)</span>
+                                </td>
+                                <td class="num">133 ms</td>
+                                <td class="num">518 ms</td>
+                                <td class="num speedup">4x</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <!-- ==================== BENCHMARK: VISUAL BAR CHART ==================== -->
+                <section>
+                    <p class="section-label">
+                        Benchmark &mdash; Kubernetes repo
+                    </p>
+                    <h2>Visualized: <code>kubelet</code> search</h2>
+                    <div class="bar-chart">
+                        <div class="bar-row">
+                            <div class="bar-label accent">Collie</div>
+                            <div class="bar-track">
+                                <div
+                                    class="bar-fill collie"
+                                    style="width: 2%"
+                                ></div>
+                            </div>
+                            <div class="bar-value">12 ms</div>
+                        </div>
+                        <div class="bar-row">
+                            <div class="bar-label dim">ripgrep</div>
+                            <div class="bar-track">
+                                <div
+                                    class="bar-fill rg"
+                                    style="width: 79%"
+                                ></div>
+                            </div>
+                            <div class="bar-value">690 ms</div>
+                        </div>
+                    </div>
+                    <div class="big-number accent">
+                        57x
+                        <span style="font-size: 0.4em; color: #bbb"
+                            >faster</span
+                        >
+                    </div>
+                </section>
+
+                <!-- ==================== BENCHMARK: SYMBOL SEARCH ==================== -->
+                <section>
+                    <p class="section-label">
+                        Benchmark &mdash; Kubernetes repo
+                    </p>
+                    <h2>
+                        Symbol search
+                        <span class="dim">(no rg equivalent)</span>
+                    </h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Query</th>
+                                <th>Collie</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>kind:fn handler</code></td>
+                                <td class="num">14 ms</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code
+                                        >kind:struct SharedInformerFactory</code
+                                    >
+                                </td>
+                                <td class="num">11 ms</td>
+                            </tr>
+                            <tr>
+                                <td><code>kind:fn path:pkg/ init</code></td>
+                                <td class="num">23 ms</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code
+                                        >kind:method
+                                        qname:HollowKubelet::Run</code
+                                    >
+                                </td>
+                                <td class="num">9 ms</td>
+                            </tr>
+                            <tr>
+                                <td><code>kind:fn validate webhook</code></td>
+                                <td class="num">9 ms</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p style="font-size: 0.7em; color: #bbb">
+                        Find <em>functions</em>, <em>structs</em>,
+                        <em>methods</em> &mdash; not just text matches.<br />
+                        Powered by <strong>Tree-sitter</strong> across 11
+                        languages.
+                    </p>
+                </section>
+
+                <!-- ==================== BENCHMARK: REGEX ==================== -->
+                <section>
+                    <p class="section-label">
+                        Benchmark &mdash; Kubernetes repo
+                    </p>
+                    <h2>
+                        Regex search
+                        <span class="dim">(index-accelerated)</span>
+                    </h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Pattern</th>
+                                <th>Collie</th>
+                                <th>ripgrep</th>
+                                <th>Speedup</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>func\s+\w+Handler</code></td>
+                                <td class="num">280 ms</td>
+                                <td class="num">460 ms</td>
+                                <td class="num speedup">1.6x</td>
+                            </tr>
+                            <tr>
+                                <td><code>interface\s*\{</code></td>
+                                <td class="num">175 ms</td>
+                                <td class="num">466 ms</td>
+                                <td class="num speedup">2.7x</td>
+                            </tr>
+                            <tr>
+                                <td><code>context\.Context</code></td>
+                                <td class="num">303 ms</td>
+                                <td class="num">438 ms</td>
+                                <td class="num speedup">1.4x</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p style="font-size: 0.7em; color: #bbb">
+                        Collie extracts literal fragments from your regex,<br />
+                        narrows candidate files via the index, then applies the
+                        full regex.
+                    </p>
+                </section>
+
+                <!-- ==================== AGENTIC BENCHMARK ==================== -->
+                <section>
+                    <p class="section-label">
+                        Why this matters for agents
+                    </p>
+                    <h2>Agents know what they're looking for</h2>
+                    <div class="modes-terminal">
+                        <div class="modes-term-bar">
+                            <span class="modes-term-dot" style="background:#ff5f56"></span>
+                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
+                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                        </div>
+                        <div class="modes-term-body">
+                            <div class="modes-section">
+                                <div class="modes-label dim">ripgrep: guess the source syntax</div>
+                                <pre class="modes-pre"><span class="modes-prompt">$</span> rg "func \(.*Authorization.*\) Validate"          <span class="dim">477 ms</span></pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label accent">collie: say what you mean</div>
+                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:method path:pkg/kubeapiserver/options/ %validate%"</span>  <span class="accent">84 ms</span></pre>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="font-size: 0.6em; color: #ccc; margin-top: 0.6em;">
+                        Agents already know the kind, language, and approximate location.<br />Structural queries turn that knowledge into precise results.
+                    </p>
+                </section>
+
+                <!-- ==================== AGENTIC: TASK BREAKDOWN ==================== -->
+                <section>
+                    <p class="section-label">
+                        Agentic benchmark &mdash; per-task
+                    </p>
+                    <h2>
+                        Task breakdown
+                        <span class="dim">(time to first hit)</span>
+                    </h2>
+                    <table style="font-size: 0.6em">
+                        <thead>
+                            <tr>
+                                <th>Task</th>
+                                <th>Symbol</th>
+                                <th>Lexical</th>
+                                <th>ripgrep</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Find HollowKubelet::Run</td>
+                                <td class="num speedup">24 ms</td>
+                                <td class="num speedup">23 ms</td>
+                                <td class="num dim">697 ms</td>
+                            </tr>
+                            <tr>
+                                <td>Webhook token authenticator</td>
+                                <td class="num speedup">152 ms</td>
+                                <td class="num speedup">87 ms</td>
+                                <td class="num dim">480 ms</td>
+                            </tr>
+                            <tr>
+                                <td>Authorization options validator</td>
+                                <td class="num speedup">78 ms</td>
+                                <td class="num speedup">24 ms</td>
+                                <td class="num dim">441 ms</td>
+                            </tr>
+                            <tr>
+                                <td>SharedInformerFactory constructor</td>
+                                <td class="num speedup">87 ms</td>
+                                <td class="num speedup">57 ms</td>
+                                <td class="num dim">399 ms</td>
+                            </tr>
+                            <tr>
+                                <td>PodDisruptionBudget validator</td>
+                                <td class="num speedup">77 ms</td>
+                                <td class="num speedup">32 ms</td>
+                                <td class="num dim">370 ms</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <!-- ==================== BUILT FOR AGENTS ==================== -->
+                <section>
+                    <h2>Built for <span class="blue">AI agents</span></h2>
+                    <div class="agent-layout">
+                        <div class="agent-points">
+                            <div class="agent-point">
+                                <div class="agent-point-key">JSON output</div>
+                                <div class="agent-point-val">
+                                    <code>--format json</code> &mdash;
+                                    structured, parseable, no regex-on-grep
+                                    hacks
+                                </div>
+                            </div>
+                            <div class="agent-point">
+                                <div class="agent-point-key">Exit codes</div>
+                                <div class="agent-point-val">
+                                    <code>0</code> results &ensp;
+                                    <code>1</code> nothing &ensp;
+                                    <code>2</code> error &mdash;
+                                    shell-scriptable
+                                </div>
+                            </div>
+                            <div class="agent-point">
+                                <div class="agent-point-key">Skill card</div>
+                                <div class="agent-point-val">
+                                    <code>collie skill</code> prints a reference
+                                    card for agent context
+                                </div>
+                            </div>
+                            <div class="agent-point">
+                                <div class="agent-point-key">Latency</div>
+                                <div class="agent-point-val">
+                                    Agents run hundreds of searches per session.
+                                    12ms vs 690ms compounds.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="agent-demo">
+                            <div class="modes-term-bar">
+                                <span
+                                    class="modes-term-dot"
+                                    style="background: #ff5f56"
+                                ></span>
+                                <span
+                                    class="modes-term-dot"
+                                    style="background: #ffbd2e"
+                                ></span>
+                                <span
+                                    class="modes-term-dot"
+                                    style="background: #27c93f"
+                                ></span>
+                            </div>
+                            <pre
+                                class="modes-pre"
+                                style="
+                                    padding: 0.7em 1em;
+                                    background: #0d0d0d;
+                                    margin: 0;
+                                    border-radius: 0 0 8px 8px;
+                                "
+                            ><span class="modes-prompt">$</span> collie search "kind:fn handler" \
+    <span class="accent">--format json</span> -n 5
+<span style="color:#666">{</span>
+  <span class="blue">"type"</span>: <span class="green">"symbol"</span>,
+  <span class="blue">"count"</span>: <span class="accent">5</span>,
+  <span class="blue">"results"</span>: [<span style="color:#666">{</span>
+    <span class="blue">"path"</span>: <span class="green">"pkg/api/handler.go"</span>,
+    <span class="blue">"line"</span>: <span class="accent">42</span>,
+    <span class="blue">"kind"</span>: <span class="green">"function"</span>
+  <span style="color:#666">}, ...]</span>
+<span style="color:#666">}</span>
+<span class="modes-prompt">$</span> echo $?
+<span class="green">0</span></pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ==================== ARCHITECTURE ==================== -->
+                <section>
+                    <h2>Under the hood</h2>
+                    <div class="arch-pipeline">
+                        <div class="arch-stage">
+                            <div class="arch-icon">source files</div>
+                            <div class="arch-arrow">&darr;</div>
+                        </div>
+                        <div class="arch-stage">
+                            <div class="arch-box">
+                                <span class="arch-lib green">Tree-sitter</span>
+                                <span class="arch-what"
+                                    >AST parsing &rarr; symbols, kinds,
+                                    scopes</span
+                                >
+                            </div>
+                            <div class="arch-box">
+                                <span class="arch-lib accent">Tantivy</span>
+                                <span class="arch-what"
+                                    >Full-text index &rarr; tokens, postings,
+                                    reverse index</span
+                                >
+                            </div>
+                            <div class="arch-arrow">&darr;</div>
+                        </div>
+                        <div class="arch-stage">
+                            <div class="arch-box">
+                                <span class="arch-lib purple">notify</span>
+                                <span class="arch-what"
+                                    >FSEvents watcher &rarr; incremental
+                                    updates</span
+                                >
+                            </div>
+                            <div class="arch-box">
+                                <span
+                                    class="arch-lib"
+                                    style="color: var(--collie-red)"
+                                    >rayon</span
+                                >
+                                <span class="arch-what"
+                                    >Parallel indexing &rarr; 29K files in
+                                    9.7s</span
+                                >
+                            </div>
+                            <div class="arch-arrow">&darr;</div>
+                        </div>
+                        <div class="arch-stage">
+                            <div
+                                class="arch-icon accent"
+                                style="font-weight: 700"
+                            >
+                                <code
+                                    style="
+                                        font-size: 1em;
+                                        color: var(--collie-orange);
+                                    "
+                                    >collie search</code
+                                >
+                            </div>
+                        </div>
+                    </div>
+                    <p
+                        style="
+                            font-size: 0.55em;
+                            color: #bbb;
+                            margin-top: 0.6em;
+                        "
+                    >
+                        All Rust. Single binary. No runtime dependencies.
+                    </p>
+                </section>
+
+                <!-- ==================== LANGUAGES ==================== -->
+                <section>
+                    <h2>11 languages</h2>
+                    <p style="font-size: 1.1em; line-height: 2">
+                        <span class="accent">Go</span> &bull;
+                        <span class="blue">Rust</span> &bull;
+                        <span class="green">Python</span> &bull;
+                        <span class="purple">TypeScript</span> &bull;
+                        JavaScript<br />
+                        C &bull; C++ &bull;
+                        <span class="red">Java</span> &bull; C# &bull; Ruby
+                        &bull; Zig
+                    </p>
+                    <br />
+                    <p class="dim" style="font-size: 0.7em">
+                        Symbol extraction: functions, methods, structs, classes,
+                        enums,<br />
+                        interfaces, traits, variables, fields, constants,
+                        modules, type aliases, imports
+                    </p>
+                </section>
+
+                <!-- ==================== INDEXING STATS ==================== -->
+                <section>
+                    <h2>Indexing performance</h2>
+                    <br />
+                    <table class="index-table">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Files</th>
+                                <th>Rebuild</th>
+                                <th>Index size</th>
+                                <th>Peak RAM</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Collie repo</strong></td>
+                                <td class="num">71</td>
+                                <td class="num accent">
+                                    <strong>0.2s</strong>
+                                </td>
+                                <td class="num">588 KB</td>
+                                <td class="num">25 MB</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Kubernetes</strong></td>
+                                <td class="num">28,903</td>
+                                <td class="num accent">
+                                    <strong>9.7s</strong>
+                                </td>
+                                <td class="num">207 MB</td>
+                                <td class="num">527 MB</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <br />
+                    <p style="font-size: 0.6em; color: #ccc">
+                        One-time cost. After that,
+                        <code style="color: var(--collie-blue)">notify</code>
+                        keeps the index current incrementally.
+                    </p>
+                </section>
+
+                <!-- ==================== QUICK START ==================== -->
+                <section>
+                    <h2>Get started</h2>
+                    <div class="modes-terminal">
+                        <div class="modes-term-bar">
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ff5f56"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ffbd2e"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #27c93f"
+                            ></span>
+                        </div>
+                        <div class="modes-term-body">
+                            <div class="modes-section">
+                                <div class="modes-label dim">Install</div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> cargo install collie-search</pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label dim">Index</div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie watch .              <span class="dim"># start daemon, index repo</span>
+<span class="modes-prompt">$</span> collie status .             <span class="dim"># verify it's running</span></pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label dim">Search</div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search <span class="accent">"handleRequest"</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn path:src/ init"</span>
+<span class="modes-prompt">$</span> collie search -e <span class="purple">"func\s+\w+Handler"</span>
+<span class="modes-prompt">$</span> collie search <span class="accent">"config"</span> --format json  <span class="dim"># for agents</span></pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label dim">
+                                    Teach your agent
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie skill               <span class="dim"># prints reference card for LLM context</span></pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ==================== CLOSING ==================== -->
+                <section>
+                    <div class="hero-title">
+                        <span class="accent">collie</span>
+                    </div>
+                    <div class="stat-row">
+                        <div class="stat-box">
+                            <div class="num">57x</div>
+                            <div class="label">faster than ripgrep</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="num">11</div>
+                            <div class="label">languages</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="num">10ms</div>
+                            <div class="label">search latency</div>
+                        </div>
+                    </div>
+                    <div class="install-cmd">
+                        <code>cargo install collie-search</code>
+                    </div>
+                    <p style="font-size: 0.7em">
+                        <span class="dim"
+                            >github.com/suleymanozkeskin/collie</span
+                        >
+                    </p>
+                </section>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+        <script>
+            Reveal.initialize({
+                hash: true,
+                slideNumber: true,
+                transition: "slide",
+                backgroundTransition: "fade",
+                center: true,
+                width: 1280,
+                height: 720,
+                margin: 0.08,
+                minScale: 0.2,
+                maxScale: 1.5,
+                plugins: [RevealHighlight],
+            });
+        </script>
+    </body>
+</html>
