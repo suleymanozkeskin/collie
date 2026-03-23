@@ -161,6 +161,12 @@ enum Commands {
         /// Output format
         #[arg(long, default_value = "default")]
         format: OutputFormat,
+
+        /// Repository path to search (default: current directory)
+        ///
+        /// Allows searching a repo without cd-ing into it first.
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
     },
 
     /// Stop the background daemon
@@ -261,11 +267,13 @@ fn run() -> anyhow::Result<i32> {
                 glob,
                 color,
                 format,
+                path,
             }),
             _,
         ) => {
             let found = collie_search::cli::search::run(collie_search::cli::search::SearchArgs {
                 pattern,
+                path: Some(path),
                 limit,
                 context,
                 after_context,

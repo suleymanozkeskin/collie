@@ -77,6 +77,8 @@ pub struct SearchArgs {
     pub glob: Option<String>,
     pub color: ColorMode,
     pub format: OutputFormat,
+    /// Repository path to search. If None, uses current directory.
+    pub path: Option<std::path::PathBuf>,
 }
 
 struct Snippet {
@@ -105,7 +107,12 @@ const RESET: &str = "\x1b[0m";
 
 /// Run a search. Returns `Ok(true)` if results were found, `Ok(false)` if not.
 pub fn run(args: SearchArgs) -> Result<bool> {
-    let worktree_root = find_worktree_root(&std::env::current_dir()?)?;
+    let start_dir = match &args.path {
+        Some(p) => std::fs::canonicalize(p)
+            .with_context(|| format!("invalid path: {:?}", p))?,
+        None => std::env::current_dir()?,
+    };
+    let worktree_root = find_worktree_root(&start_dir)?;
     let index_path = find_index_path(&worktree_root)?;
     let config = CollieConfig::load(&worktree_root);
 
@@ -695,7 +702,7 @@ fn extract_snippets(file_path: &Path, pattern: &str, context: usize) -> Option<V
 // --- Path resolution ---
 
 fn find_index_path(worktree_root: &Path) -> Result<PathBuf> {
-    let mut current = std::env::current_dir()?;
+    let mut current = worktree_root.to_path_buf();
 
     loop {
         let candidate = current.join(".collie");
