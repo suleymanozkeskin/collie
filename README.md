@@ -8,6 +8,8 @@ Install: `cargo install collie-search` (installs the `collie` command).
 
 Teach your agent, all they have to run is `collie skill`
 
+[Presentation](https://suleymanozkeskin.github.io/collie/)
+
 ## Setup
 
 ```sh
