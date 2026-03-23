@@ -2,11 +2,23 @@
 name = "collie-search"
 version = "0.1.0"
 edition = "2024"
+description = "Index-backed code search. Faster than grep on large repos."
+license = "MIT"
+repository = "https://github.com/suleymanozkeskin/collie"
+keywords = ["search", "code-search", "grep", "index", "tantivy"]
+categories = ["command-line-utilities", "development-tools", "text-processing"]
+readme = "README.md"
 autobenches = false
+exclude = ["benchmark-data/", "benchmark-results/", "scripts/", "test-worktrees/", "large-repo-for-test/"]
+
+[[bin]]
+name = "collie-search"
+path = "src/main.rs"
 
 [[bin]]
 name = "generate-corpus"
 path = "benches/generate_corpus.rs"
+required-features = ["_bench"]
 
 [[bench]]
 name = "search_benchmark"
