@@ -131,7 +131,44 @@ pub fn run(args: SearchArgs) -> Result<bool> {
         let tantivy = TantivyIndex::open(&index_path.join("tantivy"))
             .with_context(|| format!("Failed to load symbol index from {:?}", index_path))?;
         let results = tantivy.search_symbols(&symbol_query, limit)?;
+
+        // Apply glob filter to symbol results
+        let results: Vec<_> = if let Some(ref pat) = glob_pattern {
+            results
+                .into_iter()
+                .filter(|r| {
+                    pat.matches_path(&r.repo_rel_path)
+                        || r.repo_rel_path
+                            .file_name()
+                            .map_or(false, |n| pat.matches(n.to_string_lossy().as_ref()))
+                })
+                .collect()
+        } else {
+            results
+        };
+
         let found = !results.is_empty();
+
+        if args.count {
+            println!("{}", results.len());
+            return Ok(found);
+        }
+
+        if args.files_only {
+            let mut seen = HashSet::new();
+            for r in &results {
+                let path = r.repo_rel_path.to_string_lossy().to_string();
+                if seen.insert(path.clone()) {
+                    if color {
+                        println!("{MAGENTA}{}{RESET}", path);
+                    } else {
+                        println!("{}", path);
+                    }
+                }
+            }
+            return Ok(found);
+        }
+
         match args.format {
             OutputFormat::Json => print_symbol_results_json(&args.pattern, &results),
             _ => print_symbol_results(&args.pattern, &results, color),
