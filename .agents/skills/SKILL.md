@@ -111,15 +111,18 @@ collie search handler -C 3                 # 3 lines of context
 collie search handler -A 2 -B 0            # 2 lines after, 0 before
 collie search handler --format plain       # path:line:content output
 collie search handler --color never        # no ANSI escape codes
+collie search handler --path /other/repo   # search a different repo
 ```
 
-## Status (JSON)
+## Management
 
 ```sh
-collie status . --json
+collie status . --json                    # daemon status as JSON
+collie clean .                            # stop daemon + remove index
+collie rebuild .                          # rebuild index from scratch
+collie config --init .                    # create example config
+collie skill                              # print this reference
 ```
-
-Returns daemon status, file count, index size, segment count, and generation info.
 
 ## Common Agent Workflows
 
@@ -138,6 +141,11 @@ collie search 'kind:fn handler' --format json
 collie search handler -g 'src/api/**' --format json
 ```
 
+**Scope symbol search to file type:**
+```sh
+collie search 'kind:fn init' -g '*.go' --format json
+```
+
 **Count occurrences before diving in:**
 ```sh
 collie search handler -c
@@ -146,6 +154,11 @@ collie search handler -c
 **Regex grep with index acceleration:**
 ```sh
 collie search -e 'errors?\.New\(' --format json -g '*.go'
+```
+
+**Search a different repo without cd:**
+```sh
+collie search handler --path /path/to/repo --format json
 ```
 
 **Check if daemon is running:**

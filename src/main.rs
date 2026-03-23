@@ -222,6 +222,9 @@ enum Commands {
         init: bool,
     },
 
+    /// Print the agent skill reference (search modes, JSON schema, workflows)
+    Skill,
+
     #[command(name = "__daemon", hide = true)]
     InternalDaemon { path: PathBuf },
 }
@@ -325,6 +328,9 @@ fn run() -> anyhow::Result<i32> {
             } else {
                 println!("Use --init to create an example config file.");
             }
+        }
+        (Some(Commands::Skill), _) => {
+            print!("{}", include_str!("../.agents/skills/SKILL.md"));
         }
         (Some(Commands::InternalDaemon { path }), _) => {
             collie_search::daemon::run_internal_daemon(path)?;
