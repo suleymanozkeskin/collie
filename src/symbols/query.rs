@@ -13,12 +13,12 @@ pub fn parse_query(input: &str) -> SymbolQuery {
 
         match key {
             "kind" => {
-                if let Some(kind) = normalize_kind(value) {
-                    query.kind = Some(kind);
-                } else {
+                let kinds = normalize_kinds(value);
+                if kinds.is_empty() {
                     name_start = idx;
                     break;
                 }
+                query.kinds = kinds;
             }
             "lang" => {
                 if let Some(language) = normalize_language(value) {
@@ -48,24 +48,29 @@ pub fn parse_query(input: &str) -> SymbolQuery {
     query
 }
 
-pub fn normalize_kind(value: &str) -> Option<SymbolKind> {
+/// Normalize a kind filter value into one or more SymbolKinds.
+///
+/// `kind:fn` expands to both Function and Method because in most languages
+/// (Rust, Go, Python, etc.) the `fn`/`func`/`def` keyword is used for both
+/// freestanding functions and methods on types.
+pub fn normalize_kinds(value: &str) -> Vec<SymbolKind> {
     let value = value.trim().to_lowercase();
     match value.as_str() {
-        "function" | "fn" => Some(SymbolKind::Function),
-        "method" => Some(SymbolKind::Method),
-        "class" => Some(SymbolKind::Class),
-        "struct" => Some(SymbolKind::Struct),
-        "enum" => Some(SymbolKind::Enum),
-        "interface" => Some(SymbolKind::Interface),
-        "trait" => Some(SymbolKind::Trait),
-        "variable" | "var" => Some(SymbolKind::Variable),
-        "field" => Some(SymbolKind::Field),
-        "property" | "prop" => Some(SymbolKind::Property),
-        "constant" | "const" => Some(SymbolKind::Constant),
-        "module" | "mod" => Some(SymbolKind::Module),
-        "type" => Some(SymbolKind::TypeAlias),
-        "import" => Some(SymbolKind::Import),
-        _ => None,
+        "function" | "fn" => vec![SymbolKind::Function, SymbolKind::Method],
+        "method" => vec![SymbolKind::Method],
+        "class" => vec![SymbolKind::Class],
+        "struct" => vec![SymbolKind::Struct],
+        "enum" => vec![SymbolKind::Enum],
+        "interface" => vec![SymbolKind::Interface],
+        "trait" => vec![SymbolKind::Trait],
+        "variable" | "var" => vec![SymbolKind::Variable],
+        "field" => vec![SymbolKind::Field],
+        "property" | "prop" => vec![SymbolKind::Property],
+        "constant" | "const" => vec![SymbolKind::Constant],
+        "module" | "mod" => vec![SymbolKind::Module],
+        "type" => vec![SymbolKind::TypeAlias],
+        "import" => vec![SymbolKind::Import],
+        _ => Vec::new(),
     }
 }
 

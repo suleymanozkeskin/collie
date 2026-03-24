@@ -78,7 +78,8 @@ pub struct SymbolResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SymbolQuery {
-    pub kind: Option<SymbolKind>,
+    /// One or more kinds to match (OR). Empty means "any kind".
+    pub kinds: Vec<SymbolKind>,
     pub language: Option<String>,
     pub path_prefix: Option<String>,
     pub name_pattern: String,
@@ -87,7 +88,7 @@ pub struct SymbolQuery {
 
 impl SymbolQuery {
     pub fn has_filters(&self) -> bool {
-        self.kind.is_some()
+        !self.kinds.is_empty()
             || self.language.is_some()
             || self.path_prefix.is_some()
             || self.qualified_name_pattern.is_some()

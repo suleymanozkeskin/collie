@@ -1,6 +1,6 @@
 [package]
 name = "collie-search"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 description = "Index-backed code search. Faster than grep on large repos."
 license = "MIT"

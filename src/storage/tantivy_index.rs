@@ -413,14 +413,32 @@ impl TantivyIndex {
             )),
         ));
 
-        if let Some(kind) = query.kind {
-            subqueries.push((
-                Occur::Must,
-                Box::new(TermQuery::new(
-                    Term::from_field_text(self.schema.sym_kind, kind.as_str()),
-                    IndexRecordOption::Basic,
-                )),
-            ));
+        if !query.kinds.is_empty() {
+            if query.kinds.len() == 1 {
+                subqueries.push((
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(self.schema.sym_kind, query.kinds[0].as_str()),
+                        IndexRecordOption::Basic,
+                    )),
+                ));
+            } else {
+                // OR across multiple kinds (e.g. kind:fn → Function | Method)
+                let kind_clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = query
+                    .kinds
+                    .iter()
+                    .map(|k| {
+                        (
+                            Occur::Should,
+                            Box::new(TermQuery::new(
+                                Term::from_field_text(self.schema.sym_kind, k.as_str()),
+                                IndexRecordOption::Basic,
+                            )) as Box<dyn tantivy::query::Query>,
+                        )
+                    })
+                    .collect();
+                subqueries.push((Occur::Must, Box::new(BooleanQuery::new(kind_clauses))));
+            }
         }
 
         if let Some(language) = &query.language {
