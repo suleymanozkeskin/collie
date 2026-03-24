@@ -130,7 +130,13 @@ pub fn run(args: SearchArgs) -> Result<bool> {
         .transpose()?;
 
     if !crate::daemon::is_daemon_alive(&worktree_root) {
-        eprintln!("warning: collie daemon is not running; results may be stale");
+        // Only warn if the index may actually be stale. After a clean rebuild
+        // with no daemon, the index is perfectly valid — no need to alarm.
+        let collie_dir = worktree_root.join(".collie");
+        let gen_mgr = GenerationManager::new(&collie_dir);
+        if gen_mgr.needs_rebuild() {
+            eprintln!("warning: collie daemon is not running and index may be stale or corrupt");
+        }
     }
 
     crate::daemon::touch_activity(&worktree_root);

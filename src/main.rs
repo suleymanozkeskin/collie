@@ -193,9 +193,13 @@ enum Commands {
     /// from all source files. Use when the index seems corrupted or after
     /// major repository changes.
     Rebuild {
-        /// Repository path
+        /// Repository path (positional or --path)
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Repository path (alias for the positional argument)
+        #[arg(long = "path", id = "path_flag")]
+        path_flag: Option<PathBuf>,
     },
 
     /// Remove the index and all collie data for a repository
@@ -306,8 +310,8 @@ fn run() -> anyhow::Result<i32> {
         (Some(Commands::Status { path, json }), _) => {
             collie_search::cli::status::run(path, json)?;
         }
-        (Some(Commands::Rebuild { path }), _) => {
-            collie_search::cli::rebuild::run(path)?;
+        (Some(Commands::Rebuild { path, path_flag }), _) => {
+            collie_search::cli::rebuild::run(path_flag.unwrap_or(path))?;
         }
         (Some(Commands::Clean { path }), _) => {
             collie_search::daemon::clean(path)?;

@@ -117,7 +117,21 @@ pub fn start(path: PathBuf, foreground: bool, restart_on_crash: bool) -> Result<
     cleanup_stale_files(&paths)?;
 
     if foreground {
-        return run_daemon(paths);
+        let result = run_daemon(&paths);
+        if let Err(ref err) = result {
+            let mut error_state = read_state(&paths.state_path).unwrap_or_else(|_| {
+                DaemonState::new_stopped(
+                    &paths,
+                    Some(std::process::id()),
+                    err.to_string(),
+                )
+            });
+            error_state.status = DaemonStatus::Error;
+            error_state.last_error = Some(format!("{err:#}"));
+            let _ = write_state(&paths.state_path, &error_state);
+            let _ = fs::remove_file(&paths.pid_path);
+        }
+        return result;
     }
 
     let mut daemon_child = spawn_daemon_child(&paths)?;
@@ -497,7 +511,24 @@ fn secs_since_last_activity(collie_dir: &Path) -> Option<u64> {
 pub fn run_internal_daemon(path: PathBuf) -> Result<()> {
     let root = resolve_worktree_root(path)?;
     let paths = DaemonPaths::for_root(root);
-    run_daemon(paths)
+    let result = run_daemon(&paths);
+    if let Err(ref err) = result {
+        // Persist the error so `collie status` can report it, even if the
+        // process is about to exit.  Without this the state file stays at
+        // "Running" and the daemon log may be empty (buffered stderr).
+        let mut error_state = read_state(&paths.state_path).unwrap_or_else(|_| {
+            DaemonState::new_stopped(
+                &paths,
+                Some(std::process::id()),
+                err.to_string(),
+            )
+        });
+        error_state.status = DaemonStatus::Error;
+        error_state.last_error = Some(format!("{err:#}"));
+        let _ = write_state(&paths.state_path, &error_state);
+        let _ = fs::remove_file(&paths.pid_path);
+    }
+    result
 }
 
 pub fn resolve_worktree_root<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
@@ -533,7 +564,7 @@ pub fn resolve_worktree_root<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     }
 }
 
-fn run_daemon(paths: DaemonPaths) -> Result<()> {
+fn run_daemon(paths: &DaemonPaths) -> Result<()> {
     fs::create_dir_all(&paths.collie_dir)?;
     let pid = std::process::id();
     let config = CollieConfig::load(&paths.root);
@@ -574,6 +605,9 @@ fn run_daemon(paths: DaemonPaths) -> Result<()> {
         (gen_dir, skips, stats)
     };
 
+    // Prepare the Running state but DON'T write it yet — we write it only
+    // after the watcher starts successfully.  This prevents wait_for_ready
+    // in the parent from returning before the daemon is actually stable.
     let mut running_state = DaemonState::new_running(&paths, pid, Some(now_unix_ms()), None);
     running_state.total_files = stats.total_files;
     running_state.total_terms = stats.total_terms;
@@ -588,7 +622,6 @@ fn run_daemon(paths: DaemonPaths) -> Result<()> {
     running_state.compaction_recommended = false;
     running_state.skipped_files = skips.count;
     running_state.skipped_samples = skips.samples;
-    write_state(&paths.state_path, &running_state)?;
 
     let state_path = paths.state_path.clone();
     let activity_root = paths.root.clone();
@@ -652,6 +685,11 @@ fn run_daemon(paths: DaemonPaths) -> Result<()> {
             }
         })),
     )?;
+
+    // Watcher started successfully — NOW write Running state so the parent's
+    // wait_for_ready returns.  Before this point, the state file says
+    // Starting, so the parent keeps polling (and will notice if we crash).
+    write_state(&paths.state_path, &running_state)?;
 
     // Touch activity marker so idle clock starts from now
     touch_activity(&paths.root);
