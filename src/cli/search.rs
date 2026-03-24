@@ -303,8 +303,11 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
                     println!();
                     match extract_snippets(&result.file_path, opts.pattern, ctx) {
-                        Some(snippets) => print_snippets_default(&rel, &snippets, opts.color),
-                        None => println!("{} (file not found, index may be stale)", rel.display()),
+                        SnippetResult::Found(snippets) => print_snippets_default(&rel, &snippets, opts.color),
+                        SnippetResult::FileNotFound => println!("{} (file not found, index may be stale)", rel.display()),
+                        SnippetResult::NoMatches => {
+                            println!("{}", rel.display());
+                        }
                     }
                 }
             }
@@ -320,7 +323,7 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 let mut first_group = true;
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
-                    if let Some(snippets) = extract_snippets(&result.file_path, opts.pattern, ctx) {
+                    if let SnippetResult::Found(snippets) = extract_snippets(&result.file_path, opts.pattern, ctx) {
                         print_snippets_plain(&rel, &snippets, &mut first_group, opts.color);
                     }
                 }
@@ -640,22 +643,32 @@ fn build_context_snippets(
 }
 
 /// Find byte-offset positions of tokens matching the query pattern in content.
+/// For multi-term queries (e.g. "handle request"), matches any of the terms.
 fn find_match_positions(content: &str, pattern: &str) -> Option<Vec<u32>> {
     let tokenizer = Tokenizer::new();
     let tokens = tokenizer.tokenize(content);
 
-    let pattern = pattern.trim();
-    let normalized = pattern.to_lowercase();
-    let starts = normalized.starts_with('%');
-    let ends = normalized.ends_with('%');
+    // Tokenize the pattern the same way the index does — this handles
+    // multi-term queries like "handle request" or "_ADDITION|external"
+    // where the separator is stripped and we get multiple query terms.
+    let query_terms = tokenizer.tokenize(pattern);
+    if query_terms.is_empty() {
+        return None;
+    }
+
+    let pattern_trimmed = pattern.trim();
+    let starts = pattern_trimmed.starts_with('%');
+    let ends = pattern_trimmed.ends_with('%');
 
     let positions: Vec<u32> = tokens
         .iter()
-        .filter(|t| match (starts, ends) {
-            (false, false) => t.text == normalized,
-            (false, true) => t.text.starts_with(normalized.trim_end_matches('%')),
-            (true, false) => t.text.ends_with(normalized.trim_start_matches('%')),
-            (true, true) => t.text.contains(normalized.trim_matches('%')),
+        .filter(|t| {
+            query_terms.iter().any(|qt| match (starts, ends) {
+                (false, false) => t.text == qt.text,
+                (false, true) => t.text.starts_with(&qt.text),
+                (true, false) => t.text.ends_with(&qt.text),
+                (true, true) => t.text.contains(&qt.text as &str),
+            })
         })
         .map(|t| t.position as u32)
         .collect();
@@ -667,11 +680,24 @@ fn find_match_positions(content: &str, pattern: &str) -> Option<Vec<u32>> {
     }
 }
 
+/// Result of snippet extraction — distinguishes "file missing" from "no matches".
+enum SnippetResult {
+    Found(Vec<Snippet>),
+    FileNotFound,
+    NoMatches,
+}
+
 /// Extract code snippets for token search by finding match positions and
 /// building context windows.
-fn extract_snippets(file_path: &Path, pattern: &str, context: usize) -> Option<Vec<Snippet>> {
-    let content = std::fs::read_to_string(file_path).ok()?;
-    let positions = find_match_positions(&content, pattern)?;
+fn extract_snippets(file_path: &Path, pattern: &str, context: usize) -> SnippetResult {
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(_) => return SnippetResult::FileNotFound,
+    };
+    let positions = match find_match_positions(&content, pattern) {
+        Some(p) => p,
+        None => return SnippetResult::NoMatches,
+    };
 
     // Build line-start offset table
     let line_starts: Vec<usize> = std::iter::once(0)
@@ -696,7 +722,10 @@ fn extract_snippets(file_path: &Path, pattern: &str, context: usize) -> Option<V
         })
         .collect();
 
-    build_context_snippets(file_path, &match_lines, context)
+    match build_context_snippets(file_path, &match_lines, context) {
+        Some(snippets) => SnippetResult::Found(snippets),
+        None => SnippetResult::NoMatches,
+    }
 }
 
 // --- Path resolution ---

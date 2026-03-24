@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Collie Presentation Playground</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #111;
+    color: #ddd;
+    height: 100vh;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    grid-template-rows: 1fr auto;
+    overflow: hidden;
+  }
+
+  /* ===== Controls Panel ===== */
+  .controls {
+    background: #1a1a1a;
+    border-right: 1px solid #2a2a2a;
+    padding: 16px;
+    overflow-y: auto;
+    grid-row: 1 / 3;
+  }
+  .controls h2 {
+    font-size: 13px;
+    color: #ff8c42;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 16px 0 8px;
+  }
+  .controls h2:first-child { margin-top: 0; }
+  .control-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 6px 0;
+  }
+  .control-row label {
+    font-size: 12px;
+    color: #999;
+    flex-shrink: 0;
+  }
+  .control-row input[type="color"] {
+    width: 32px;
+    height: 24px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background: none;
+    cursor: pointer;
+  }
+  .control-row input[type="range"] {
+    width: 100px;
+    accent-color: #ff8c42;
+  }
+  .control-row .val {
+    font-family: 'SF Mono', monospace;
+    font-size: 11px;
+    color: #666;
+    width: 40px;
+    text-align: right;
+  }
+  .preset-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 8px 0;
+  }
+  .preset-btn {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid #333;
+    background: #222;
+    color: #ccc;
+    cursor: pointer;
+  }
+  .preset-btn:hover { border-color: #ff8c42; color: #ff8c42; }
+  .preset-btn.active { background: #ff8c42; color: #000; border-color: #ff8c42; }
+
+  /* ===== Preview Area ===== */
+  .preview {
+    background: #0a0a0a;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .slide-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 16px;
+  }
+  .slide-thumb {
+    position: relative;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #2a2a2a;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .slide-thumb:hover { border-color: #ff8c42; }
+  .slide-thumb.active { border-color: #ff8c42; box-shadow: 0 0 0 2px rgba(255,140,66,0.3); }
+  .slide-thumb iframe {
+    width: 1280px;
+    height: 720px;
+    transform-origin: 0 0;
+    transform: scale(0.3);
+    pointer-events: none;
+    border: none;
+    display: block;
+  }
+  .slide-thumb-wrap {
+    width: 384px;
+    height: 216px;
+    overflow: hidden;
+  }
+  .slide-num {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ff8c42;
+    background: rgba(0,0,0,0.7);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  /* ===== Prompt Output ===== */
+  .prompt-bar {
+    background: #1a1a1a;
+    border-top: 1px solid #2a2a2a;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .prompt-text {
+    flex: 1;
+    font-family: 'SF Mono', monospace;
+    font-size: 12px;
+    color: #999;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .copy-btn {
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 4px;
+    border: 1px solid #ff8c42;
+    background: transparent;
+    color: #ff8c42;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .copy-btn:hover { background: #ff8c42; color: #000; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <h2>Colors</h2>
+  <div class="control-row">
+    <label>Orange (accent)</label>
+    <input type="color" id="c-orange" value="#ff8c42">
+  </div>
+  <div class="control-row">
+    <label>Blue (secondary)</label>
+    <input type="color" id="c-blue" value="#4ecdc4">
+  </div>
+  <div class="control-row">
+    <label>Green (success)</label>
+    <input type="color" id="c-green" value="#a8e6cf">
+  </div>
+  <div class="control-row">
+    <label>Red (warning)</label>
+    <input type="color" id="c-red" value="#ff6b6b">
+  </div>
+  <div class="control-row">
+    <label>Purple (tertiary)</label>
+    <input type="color" id="c-purple" value="#c3a6ff">
+  </div>
+  <div class="control-row">
+    <label>Dim text</label>
+    <input type="color" id="c-dim" value="#888888">
+  </div>
+
+  <h2>Typography</h2>
+  <div class="control-row">
+    <label>Body text</label>
+    <input type="color" id="c-body" value="#bbbbbb">
+  </div>
+  <div class="control-row">
+    <label>Muted text</label>
+    <input type="color" id="c-muted" value="#666666">
+  </div>
+  <div class="control-row">
+    <label>Heading scale</label>
+    <input type="range" id="r-heading" min="1.2" max="2.4" step="0.1" value="1.8">
+    <span class="val" id="v-heading">1.8</span>
+  </div>
+
+  <h2>Layout</h2>
+  <div class="control-row">
+    <label>Slide margin</label>
+    <input type="range" id="r-margin" min="0.02" max="0.15" step="0.01" value="0.08">
+    <span class="val" id="v-margin">8%</span>
+  </div>
+  <div class="control-row">
+    <label>Content pad X</label>
+    <input type="range" id="r-padx" min="20" max="120" step="5" value="60">
+    <span class="val" id="v-padx">60px</span>
+  </div>
+  <div class="control-row">
+    <label>Content pad Y</label>
+    <input type="range" id="r-pady" min="20" max="80" step="5" value="40">
+    <span class="val" id="v-pady">40px</span>
+  </div>
+  <div class="control-row">
+    <label>Max content W</label>
+    <input type="range" id="r-maxw" min="700" max="1200" step="20" value="960">
+    <span class="val" id="v-maxw">960</span>
+  </div>
+
+  <h2>Terminal</h2>
+  <div class="control-row">
+    <label>Terminal bg</label>
+    <input type="color" id="c-termbg" value="#0d0d0d">
+  </div>
+  <div class="control-row">
+    <label>Terminal border</label>
+    <input type="color" id="c-termborder" value="#2a2a2a">
+  </div>
+  <div class="control-row">
+    <label>Code font size</label>
+    <input type="range" id="r-codefont" min="0.3" max="0.55" step="0.01" value="0.38">
+    <span class="val" id="v-codefont">0.38</span>
+  </div>
+
+  <h2>Presets</h2>
+  <div class="preset-row">
+    <button class="preset-btn active" onclick="applyPreset('current')">Current</button>
+    <button class="preset-btn" onclick="applyPreset('highcontrast')">High contrast</button>
+    <button class="preset-btn" onclick="applyPreset('warm')">Warmer</button>
+    <button class="preset-btn" onclick="applyPreset('cool')">Cooler</button>
+  </div>
+</div>
+
+<div class="preview">
+  <div class="slide-grid" id="slideGrid"></div>
+</div>
+
+<div class="prompt-bar">
+  <div class="prompt-text" id="promptText">Adjust controls to generate a prompt...</div>
+  <button class="copy-btn" id="copyBtn" onclick="copyPrompt()">Copy Prompt</button>
+</div>
+
+<script>
+const TOTAL_SLIDES = 17;
+const DEFAULTS = {
+  orange: '#ff8c42', blue: '#4ecdc4', green: '#a8e6cf', red: '#ff6b6b',
+  purple: '#c3a6ff', dim: '#888888', body: '#bbbbbb', muted: '#666666',
+  heading: 1.8, margin: 0.08, padx: 60, pady: 40, maxw: 960,
+  termbg: '#0d0d0d', termborder: '#2a2a2a', codefont: 0.38
+};
+
+const PRESETS = {
+  current: { ...DEFAULTS },
+  highcontrast: {
+    ...DEFAULTS, dim: '#aaaaaa', body: '#dddddd', muted: '#888888'
+  },
+  warm: {
+    ...DEFAULTS, orange: '#ffaa55', blue: '#5dd9c0', dim: '#999999', body: '#cccccc',
+    termbg: '#141210'
+  },
+  cool: {
+    ...DEFAULTS, orange: '#e8944f', blue: '#44c4cc', purple: '#a9b4ff',
+    dim: '#999999', body: '#cccccc', termbg: '#0a0d10'
+  }
+};
+
+const state = { ...DEFAULTS };
+
+// Build slide thumbnails
+const grid = document.getElementById('slideGrid');
+const iframes = [];
+for (let i = 0; i < TOTAL_SLIDES; i++) {
+  const thumb = document.createElement('div');
+  thumb.className = 'slide-thumb';
+  thumb.innerHTML = `
+    <div class="slide-num">${i + 1}</div>
+    <div class="slide-thumb-wrap">
+      <iframe src="index.html#/${i}"></iframe>
+    </div>
+  `;
+  grid.appendChild(thumb);
+  iframes.push(thumb.querySelector('iframe'));
+}
+
+// Bind controls
+function bind(id, key, transform, displayFn) {
+  const el = document.getElementById(id);
+  const valEl = document.getElementById(id.replace('c-','v-').replace('r-','v-'));
+  el.addEventListener('input', () => {
+    state[key] = transform ? transform(el.value) : el.value;
+    if (valEl && displayFn) valEl.textContent = displayFn(state[key]);
+    updateAll();
+  });
+}
+
+bind('c-orange', 'orange');
+bind('c-blue', 'blue');
+bind('c-green', 'green');
+bind('c-red', 'red');
+bind('c-purple', 'purple');
+bind('c-dim', 'dim');
+bind('c-body', 'body');
+bind('c-muted', 'muted');
+bind('r-heading', 'heading', parseFloat, v => v.toFixed(1));
+bind('r-margin', 'margin', parseFloat, v => Math.round(v*100)+'%');
+bind('r-padx', 'padx', parseInt, v => v+'px');
+bind('r-pady', 'pady', parseInt, v => v+'px');
+bind('r-maxw', 'maxw', parseInt, v => v+'');
+bind('c-termbg', 'termbg');
+bind('c-termborder', 'termborder');
+bind('r-codefont', 'codefont', parseFloat, v => v.toFixed(2));
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  Object.assign(state, p);
+  // Sync controls
+  document.getElementById('c-orange').value = state.orange;
+  document.getElementById('c-blue').value = state.blue;
+  document.getElementById('c-green').value = state.green;
+  document.getElementById('c-red').value = state.red;
+  document.getElementById('c-purple').value = state.purple;
+  document.getElementById('c-dim').value = state.dim;
+  document.getElementById('c-body').value = state.body;
+  document.getElementById('c-muted').value = state.muted;
+  document.getElementById('r-heading').value = state.heading;
+  document.getElementById('v-heading').textContent = state.heading.toFixed(1);
+  document.getElementById('r-margin').value = state.margin;
+  document.getElementById('v-margin').textContent = Math.round(state.margin*100)+'%';
+  document.getElementById('r-padx').value = state.padx;
+  document.getElementById('v-padx').textContent = state.padx+'px';
+  document.getElementById('r-pady').value = state.pady;
+  document.getElementById('v-pady').textContent = state.pady+'px';
+  document.getElementById('r-maxw').value = state.maxw;
+  document.getElementById('v-maxw').textContent = state.maxw;
+  document.getElementById('c-termbg').value = state.termbg;
+  document.getElementById('c-termborder').value = state.termborder;
+  document.getElementById('r-codefont').value = state.codefont;
+  document.getElementById('v-codefont').textContent = state.codefont.toFixed(2);
+  // Highlight active
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[onclick="applyPreset('${name}')"]`)?.classList.add('active');
+  updateAll();
+}
+
+function injectCSS(iframe) {
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) return;
+    let style = doc.getElementById('playground-overrides');
+    if (!style) {
+      style = doc.createElement('style');
+      style.id = 'playground-overrides';
+      doc.head.appendChild(style);
+    }
+    style.textContent = `
+      :root {
+        --collie-orange: ${state.orange} !important;
+        --collie-blue: ${state.blue} !important;
+        --collie-green: ${state.green} !important;
+        --collie-red: ${state.red} !important;
+        --collie-purple: ${state.purple} !important;
+        --collie-dim: ${state.dim} !important;
+      }
+      .reveal .slides section {
+        padding: ${state.pady}px ${state.padx}px !important;
+      }
+      .reveal .slides section > * {
+        max-width: ${state.maxw}px !important;
+      }
+      .reveal h2 {
+        font-size: ${state.heading}em !important;
+      }
+      .reveal .modes-terminal {
+        background: ${state.termbg} !important;
+        border-color: ${state.termborder} !important;
+      }
+      .reveal .modes-pre {
+        font-size: ${state.codefont}em !important;
+      }
+      /* Body text overrides for inline styles */
+      .reveal .slides section p[style*="color: #bbb"],
+      .reveal .slides section p[style*="color:#bbb"] {
+        color: ${state.body} !important;
+      }
+      .reveal .slides section p[style*="color: #888"],
+      .reveal .slides section p[style*="color:#888"] {
+        color: ${state.dim} !important;
+      }
+      .reveal .slides section p[style*="color: #999"],
+      .reveal .slides section p[style*="color:#999"] {
+        color: ${state.dim} !important;
+      }
+      .reveal .slides section p[style*="color: #666"],
+      .reveal .slides section p[style*="color:#666"] {
+        color: ${state.muted} !important;
+      }
+      .reveal .slides section p[style*="color: #555"],
+      .reveal .slides section p[style*="color:#555"] {
+        color: ${state.muted} !important;
+      }
+      .reveal .feature-item p,
+      .reveal .agent-point-val,
+      .reveal .problem-note,
+      .reveal .arch-what,
+      .reveal .modes-desc {
+        color: ${state.dim} !important;
+      }
+    `;
+  } catch(e) {}
+}
+
+function updateAll() {
+  iframes.forEach(iframe => {
+    if (iframe.contentDocument) {
+      injectCSS(iframe);
+    }
+  });
+  updatePrompt();
+}
+
+function updatePrompt() {
+  const parts = [];
+  if (state.dim !== DEFAULTS.dim) parts.push(`dim text color to ${state.dim}`);
+  if (state.body !== DEFAULTS.body) parts.push(`body text color to ${state.body}`);
+  if (state.muted !== DEFAULTS.muted) parts.push(`muted text color to ${state.muted}`);
+  if (state.orange !== DEFAULTS.orange) parts.push(`orange accent to ${state.orange}`);
+  if (state.blue !== DEFAULTS.blue) parts.push(`blue to ${state.blue}`);
+  if (state.green !== DEFAULTS.green) parts.push(`green to ${state.green}`);
+  if (state.red !== DEFAULTS.red) parts.push(`red to ${state.red}`);
+  if (state.purple !== DEFAULTS.purple) parts.push(`purple to ${state.purple}`);
+  if (state.heading !== DEFAULTS.heading) parts.push(`h2 font-size to ${state.heading}em`);
+  if (state.margin !== DEFAULTS.margin) parts.push(`Reveal margin to ${state.margin}`);
+  if (state.padx !== DEFAULTS.padx) parts.push(`slide padding-x to ${state.padx}px`);
+  if (state.pady !== DEFAULTS.pady) parts.push(`slide padding-y to ${state.pady}px`);
+  if (state.maxw !== DEFAULTS.maxw) parts.push(`max content width to ${state.maxw}px`);
+  if (state.termbg !== DEFAULTS.termbg) parts.push(`terminal background to ${state.termbg}`);
+  if (state.termborder !== DEFAULTS.termborder) parts.push(`terminal border to ${state.termborder}`);
+  if (state.codefont !== DEFAULTS.codefont) parts.push(`terminal code font-size to ${state.codefont}em`);
+
+  const el = document.getElementById('promptText');
+  if (parts.length === 0) {
+    el.textContent = 'No changes from defaults.';
+  } else {
+    el.textContent = `In the Collie presentation (presentation/index.html), update: ${parts.join(', ')}.`;
+  }
+}
+
+function copyPrompt() {
+  const text = document.getElementById('promptText').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy Prompt', 1500);
+  });
+}
+
+// Wait for iframes to load, then inject
+window.addEventListener('load', () => {
+  iframes.forEach((iframe, i) => {
+    iframe.addEventListener('load', () => {
+      // Navigate to the correct slide
+      try {
+        iframe.contentWindow.Reveal?.slide(i);
+      } catch(e) {}
+      setTimeout(() => injectCSS(iframe), 500);
+    });
+  });
+});
+</script>
+</body>
+</html>
