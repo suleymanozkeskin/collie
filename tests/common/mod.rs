@@ -46,7 +46,7 @@ pub fn create_worktree() -> Result<Worktree> {
 }
 
 pub fn collie_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_collie-search"))
+    PathBuf::from(env!("CARGO_BIN_EXE_collie"))
 }
 
 pub fn collie_dir(root: &Path) -> PathBuf {

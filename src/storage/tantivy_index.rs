@@ -713,8 +713,20 @@ impl TantivyIndex {
         query: &dyn tantivy::query::Query,
         limit: usize,
     ) -> Vec<SearchResult> {
+        // Filter to file docs only so symbol docs don't consume limit slots.
+        let file_filter = BooleanQuery::new(vec![
+            (Occur::Must, query.box_clone()),
+            (
+                Occur::Must,
+                Box::new(TermQuery::new(
+                    Term::from_field_text(self.schema.doc_type, "file"),
+                    IndexRecordOption::Basic,
+                )),
+            ),
+        ]);
+
         let searcher = self.reader.searcher();
-        let top_docs = match searcher.search(query, &TopDocs::with_limit(limit)) {
+        let top_docs = match searcher.search(&file_filter, &TopDocs::with_limit(limit)) {
             Ok(docs) => docs,
             Err(_) => return Vec::new(),
         };
@@ -725,14 +737,6 @@ impl TantivyIndex {
                 Ok(d) => d,
                 Err(_) => continue,
             };
-
-            let doc_type = doc
-                .get_first(self.schema.doc_type)
-                .and_then(|v| v.as_str())
-                .unwrap_or("file");
-            if doc_type != "file" {
-                continue;
-            }
 
             let file_path = match doc
                 .get_first(self.schema.file_path)

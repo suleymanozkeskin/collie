@@ -84,6 +84,8 @@ pub fn normalize_language(value: &str) -> Option<String> {
         "php" => Some("php".to_string()),
         "swift" => Some("swift".to_string()),
         "kotlin" | "kt" => Some("kotlin".to_string()),
+        "csharp" | "cs" => Some("csharp".to_string()),
+        "zig" => Some("zig".to_string()),
         _ => None,
     }
 }

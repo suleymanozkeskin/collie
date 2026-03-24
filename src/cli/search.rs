@@ -125,7 +125,9 @@ pub fn run(args: SearchArgs) -> Result<bool> {
     );
     let symbol_query = parse_query(&args.pattern);
     let color = use_color(&args.color) && !matches!(args.format, OutputFormat::Json);
-    let glob_pattern = args.glob.as_deref().map(|g| glob::Pattern::new(g).ok()).flatten();
+    let glob_pattern = args.glob.as_deref()
+        .map(|g| glob::Pattern::new(g).with_context(|| format!("invalid glob pattern: {}", g)))
+        .transpose()?;
 
     if !crate::daemon::is_daemon_alive(&worktree_root) {
         eprintln!("warning: collie daemon is not running; results may be stale");
@@ -298,11 +300,10 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                     println!("{}. {}", idx + 1, rel.display());
                 }
             } else {
-                let ctx = opts.before_ctx.max(opts.after_ctx);
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
                     println!();
-                    match extract_snippets(&result.file_path, opts.pattern, ctx) {
+                    match extract_snippets(&result.file_path, opts.pattern, opts.before_ctx, opts.after_ctx) {
                         SnippetResult::Found(snippets) => print_snippets_default(&rel, &snippets, opts.color),
                         SnippetResult::FileNotFound => println!("{} (file not found, index may be stale)", rel.display()),
                         SnippetResult::NoMatches => {
@@ -319,11 +320,10 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                     println!("{}", rel.display());
                 }
             } else {
-                let ctx = opts.before_ctx.max(opts.after_ctx);
                 let mut first_group = true;
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
-                    if let SnippetResult::Found(snippets) = extract_snippets(&result.file_path, opts.pattern, ctx) {
+                    if let SnippetResult::Found(snippets) = extract_snippets(&result.file_path, opts.pattern, opts.before_ctx, opts.after_ctx) {
                         print_snippets_plain(&rel, &snippets, &mut first_group, opts.color);
                     }
                 }
@@ -380,10 +380,11 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 }
             })
             .collect();
+        let count = json_results.len();
         println!("{}", serde_json::to_string(&JsonOutput {
             pattern: opts.pattern.to_string(),
             search_type: "regex".to_string(),
-            count: results.len(),
+            count,
             results: json_results,
         })?);
         return Ok(found);
@@ -408,7 +409,6 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
         return Ok(true);
     }
 
-    let ctx = opts.before_ctx.max(opts.after_ctx);
     match opts.format {
         OutputFormat::Default => {
             println!("Found {} file(s) with matches for regex: {}", results.len(), opts.pattern);
@@ -419,7 +419,7 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                     println!("{}", rel.display());
                 } else {
                     let match_lines: Vec<usize> = result.matches.iter().map(|m| m.line_number).collect();
-                    match build_context_snippets(&result.file_path, &match_lines, ctx) {
+                    match build_context_snippets(&result.file_path, &match_lines, opts.before_ctx, opts.after_ctx) {
                         Some(snippets) => print_snippets_default(&rel, &snippets, opts.color),
                         None => println!("{} (file not found, index may be stale)", rel.display()),
                     }
@@ -437,7 +437,7 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
                     let match_lines: Vec<usize> = result.matches.iter().map(|m| m.line_number).collect();
-                    if let Some(snippets) = build_context_snippets(&result.file_path, &match_lines, ctx) {
+                    if let Some(snippets) = build_context_snippets(&result.file_path, &match_lines, opts.before_ctx, opts.after_ctx) {
                         print_snippets_plain(&rel, &snippets, &mut first_group, opts.color);
                     }
                 }
@@ -584,7 +584,8 @@ fn print_symbol_results(pattern: &str, results: &[SymbolResult], color: bool) {
 fn build_context_snippets(
     file_path: &Path,
     match_line_numbers: &[usize],
-    context: usize,
+    before_ctx: usize,
+    after_ctx: usize,
 ) -> Option<Vec<Snippet>> {
     let content = std::fs::read_to_string(file_path).ok()?;
     let lines_vec: Vec<&str> = content
@@ -610,14 +611,14 @@ fn build_context_snippets(
     let mut i = 0;
     while i < match_lines_0.len() {
         let match_line = match_lines_0[i];
-        let window_start = match_line.saturating_sub(context);
-        let mut window_end = (match_line + context + 1).min(total_lines);
+        let window_start = match_line.saturating_sub(before_ctx);
+        let mut window_end = (match_line + after_ctx + 1).min(total_lines);
 
         while i + 1 < match_lines_0.len() {
             let next = match_lines_0[i + 1];
-            let next_start = next.saturating_sub(context);
+            let next_start = next.saturating_sub(before_ctx);
             if next_start <= window_end {
-                window_end = (next + context + 1).min(total_lines);
+                window_end = (next + after_ctx + 1).min(total_lines);
                 i += 1;
             } else {
                 break;
@@ -689,7 +690,7 @@ enum SnippetResult {
 
 /// Extract code snippets for token search by finding match positions and
 /// building context windows.
-fn extract_snippets(file_path: &Path, pattern: &str, context: usize) -> SnippetResult {
+fn extract_snippets(file_path: &Path, pattern: &str, before_ctx: usize, after_ctx: usize) -> SnippetResult {
     let content = match std::fs::read_to_string(file_path) {
         Ok(c) => c,
         Err(_) => return SnippetResult::FileNotFound,
@@ -722,7 +723,7 @@ fn extract_snippets(file_path: &Path, pattern: &str, context: usize) -> SnippetR
         })
         .collect();
 
-    match build_context_snippets(file_path, &match_lines, context) {
+    match build_context_snippets(file_path, &match_lines, before_ctx, after_ctx) {
         Some(snippets) => SnippetResult::Found(snippets),
         None => SnippetResult::NoMatches,
     }
@@ -731,35 +732,23 @@ fn extract_snippets(file_path: &Path, pattern: &str, context: usize) -> SnippetR
 // --- Path resolution ---
 
 fn find_index_path(worktree_root: &Path) -> Result<PathBuf> {
-    let mut current = worktree_root.to_path_buf();
+    let candidate = worktree_root.join(".collie");
 
-    loop {
-        let candidate = current.join(".collie");
-
-        if candidate.join("CURRENT").is_file() {
-            let mgr = GenerationManager::new(&candidate);
-            if let Ok(Some(gen_dir)) = mgr.active_generation() {
-                if mgr.needs_rebuild() && !crate::daemon::is_daemon_alive(worktree_root) {
-                    anyhow::bail!(
-                        "Index requires rebuild (dirty or corrupt). \
-                         Run 'collie watch .' to rebuild."
-                    );
-                }
-                return Ok(gen_dir);
+    if candidate.join("CURRENT").is_file() {
+        let mgr = GenerationManager::new(&candidate);
+        if let Ok(Some(gen_dir)) = mgr.active_generation() {
+            if mgr.needs_rebuild() && !crate::daemon::is_daemon_alive(worktree_root) {
+                anyhow::bail!(
+                    "Index requires rebuild (dirty or corrupt). \
+                     Run 'collie watch .' to rebuild."
+                );
             }
+            return Ok(gen_dir);
         }
+    }
 
-        if candidate.join("tantivy").is_dir() {
-            return Ok(candidate);
-        }
-
-        if current == *worktree_root {
-            break;
-        }
-
-        if !current.pop() {
-            break;
-        }
+    if candidate.join("tantivy").is_dir() {
+        return Ok(candidate);
     }
 
     anyhow::bail!("No index found. Run 'collie watch .' from the worktree root first.");

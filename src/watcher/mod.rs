@@ -401,6 +401,21 @@ fn run_processor_loop(
 }
 
 fn collect_event(event: &Event, pending: &mut HashMap<PathBuf, ActionKind>) {
+    // RenameMode::Both carries [old_path, new_path] in a single event.
+    // old_path should be Removed, new_path should be Indexed.
+    if matches!(
+        event.kind,
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+    ) {
+        if let Some(old) = event.paths.first() {
+            pending.insert(old.clone(), ActionKind::Remove);
+        }
+        if let Some(new) = event.paths.get(1) {
+            pending.insert(new.clone(), ActionKind::Index);
+        }
+        return;
+    }
+
     for path in &event.paths {
         if let Some(action) = map_action(&event.kind) {
             // Latest action wins. A Remove followed by an Index (file
@@ -418,9 +433,11 @@ fn map_action(kind: &EventKind) -> Option<ActionKind> {
         EventKind::Modify(ModifyKind::Data(_))
         | EventKind::Modify(ModifyKind::Any)
         | EventKind::Modify(ModifyKind::Name(RenameMode::To)) => Some(ActionKind::Index),
-        EventKind::Modify(ModifyKind::Name(RenameMode::From))
-        | EventKind::Modify(ModifyKind::Name(_))
-        | EventKind::Remove(RemoveKind::File)
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)) => Some(ActionKind::Remove),
+        // RenameMode::Both is handled in collect_event directly.
+        // Other/Any rename modes — treat as Index to be safe (re-index if file exists).
+        EventKind::Modify(ModifyKind::Name(_)) => Some(ActionKind::Index),
+        EventKind::Remove(RemoveKind::File)
         | EventKind::Remove(RemoveKind::Any)
         | EventKind::Remove(_) => Some(ActionKind::Remove),
         _ => None,
