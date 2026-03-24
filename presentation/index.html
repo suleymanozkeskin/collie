@@ -1068,6 +1068,35 @@
                     </p>
                 </section>
 
+                <!-- ==================== PDF INDEXING ==================== -->
+                <section>
+                    <h2>Search beyond source code</h2>
+                    <div class="modes-terminal">
+                        <div class="modes-term-bar">
+                            <span class="modes-term-dot" style="background:#ff5f56"></span>
+                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
+                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                        </div>
+                        <div class="modes-term-body">
+                            <div class="modes-section">
+                                <div class="modes-label dim">Enable in .collie/config.toml</div>
+                                <pre class="modes-pre"><span class="accent">include_pdfs</span> = true</pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label accent">Search code and docs in one query</div>
+                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="accent">"authentication flow"</span>
+<span class="dim">  src/auth/handler.go:14        func authFlow() {</span>
+<span class="dim">  docs/design-spec.pdf:3        Section 4.2: Authentication Flow</span>
+<span class="dim">  rfcs/auth-v2.pdf:1            RFC: Revised authentication flow</span></pre>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="font-size: 0.6em; color: #ccc; margin-top: 0.5em;">
+                        Design specs, RFCs, API docs, research papers — indexed alongside code.<br />grep and ripgrep can't do this.
+                    </p>
+                </section>
+
                 <!-- ==================== BENCHMARK: LEXICAL ==================== -->
                 <section>
                     <p class="section-label">
