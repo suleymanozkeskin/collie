@@ -372,6 +372,10 @@ impl IndexBuilder {
         }
     }
 
+    pub fn set_worktree_root<P: Into<PathBuf>>(&mut self, root: P) {
+        self.worktree_root = Some(root.into());
+    }
+
     fn repo_relative_path(&self, file_path: &Path) -> PathBuf {
         // Try strip_prefix directly first — avoids a syscall per file when
         // the walker already provides absolute paths matching the root.

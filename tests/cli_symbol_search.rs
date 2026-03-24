@@ -120,7 +120,7 @@ fn cli_short_symbol_substring_shows_explicit_error() -> Result<()> {
     assert!(!output.status.success());
     assert_eq!(
         stderr(&output),
-        "warning: collie daemon is not running; results may be stale\nsymbol substring search requires at least 3 chars"
+        "symbol substring search requires at least 3 chars"
     );
     Ok(())
 }

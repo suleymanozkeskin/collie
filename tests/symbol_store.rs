@@ -74,7 +74,7 @@ fn search_symbols_by_kind() -> Result<()> {
 
     let results = index.search_symbols(
         &SymbolQuery {
-            kind: Some(SymbolKind::Function),
+            kinds: vec![SymbolKind::Function],
             ..SymbolQuery::default()
         },
         0,
@@ -262,7 +262,7 @@ fn combined_symbol_filters() -> Result<()> {
 
     let results = index.search_symbols(
         &SymbolQuery {
-            kind: Some(SymbolKind::Function),
+            kinds: vec![SymbolKind::Function],
             language: Some("go".to_string()),
             name_pattern: "handlerequest".to_string(),
             ..SymbolQuery::default()
@@ -427,7 +427,7 @@ fn symbol_name_parts_camel_case() -> Result<()> {
     index.commit()?;
     let results = index.search_symbols(
         &SymbolQuery {
-            kind: Some(SymbolKind::Function),
+            kinds: vec![SymbolKind::Function],
             name_pattern: "paying users".to_string(),
             ..SymbolQuery::default()
         },
@@ -448,7 +448,7 @@ fn symbol_name_parts_snake_case() -> Result<()> {
     index.commit()?;
     let results = index.search_symbols(
         &SymbolQuery {
-            kind: Some(SymbolKind::Function),
+            kinds: vec![SymbolKind::Function],
             name_pattern: "webhook token".to_string(),
             ..SymbolQuery::default()
         },
@@ -473,7 +473,7 @@ fn symbol_name_parts_pascal_case() -> Result<()> {
     index.commit()?;
     let results = index.search_symbols(
         &SymbolQuery {
-            kind: Some(SymbolKind::Struct),
+            kinds: vec![SymbolKind::Struct],
             name_pattern: "informer factory".to_string(),
             ..SymbolQuery::default()
         },
@@ -493,7 +493,7 @@ fn symbol_name_parts_no_false_match() -> Result<()> {
     index.commit()?;
     let results = index.search_symbols(
         &SymbolQuery {
-            kind: Some(SymbolKind::Function),
+            kinds: vec![SymbolKind::Function],
             name_pattern: "billing users".to_string(),
             ..SymbolQuery::default()
         },
@@ -512,7 +512,7 @@ fn qualified_name_parts_search() -> Result<()> {
     index.commit()?;
     let results = index.search_symbols(
         &SymbolQuery {
-            kind: Some(SymbolKind::Method),
+            kinds: vec![SymbolKind::Method],
             qualified_name_pattern: Some("server handle request".to_string()),
             ..SymbolQuery::default()
         },

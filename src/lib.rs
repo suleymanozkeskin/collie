@@ -1,9 +1,10 @@
 pub mod benchmark;
-pub mod regex_search;
 pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod indexer;
+pub mod paths;
+pub mod regex_search;
 pub mod storage;
 pub mod symbols;
 pub mod watcher;

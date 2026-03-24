@@ -47,7 +47,7 @@ AI AGENT INTEGRATION:
   Exit codes: 0 = results found, 1 = no results, 2 = error
 
 PDF SUPPORT:
-  Enable PDF text extraction in .collie/config.toml:
+  Enable PDF text extraction in .collie.toml:
     [index]
     include_pdfs = true"
 )]
@@ -58,6 +58,10 @@ struct Cli {
     /// Search pattern (when no subcommand)
     #[arg(short = 's', long)]
     search: Option<String>,
+
+    /// Repository path to search when using --search without a subcommand
+    #[arg(long, requires = "search")]
+    path: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -204,8 +208,9 @@ enum Commands {
 
     /// Remove the index and all collie data for a repository
     ///
-    /// Stops the daemon if running, then removes the .collie/ directory.
-    /// The index will be rebuilt on the next `collie watch`.
+    /// Stops the daemon if running, then removes Collie's external runtime
+    /// state for this repository. The index will be rebuilt on the next
+    /// `collie watch`.
     Clean {
         /// Repository path
         #[arg(default_value = ".")]
@@ -214,14 +219,15 @@ enum Commands {
 
     /// Manage configuration
     ///
-    /// Configuration lives in .collie/config.toml. Use --init to create
-    /// an example config file with all available options documented.
+    /// Configuration lives in .collie.toml. Legacy .collie/config.toml is
+    /// still read for compatibility. Use --init to create an example config
+    /// file with all available options documented.
     Config {
         /// Repository path
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Create an example config file at .collie/config.toml
+        /// Create an example config file at .collie.toml
         #[arg(long)]
         init: bool,
     },
@@ -237,7 +243,7 @@ fn main() {
     match run() {
         Ok(code) => std::process::exit(code),
         Err(err) => {
-            eprintln!("{err}");
+            eprintln!("{err:#}");
             std::process::exit(2);
         }
     }
@@ -246,6 +252,7 @@ fn main() {
 /// Returns exit code: 0 = success/found, 1 = no results, 2 = error.
 fn run() -> anyhow::Result<i32> {
     let cli = Cli::parse();
+    let search_path = cli.path.clone();
 
     match (cli.command, cli.search) {
         (
@@ -300,6 +307,7 @@ fn run() -> anyhow::Result<i32> {
         (None, Some(pattern)) => {
             let found = collie_search::cli::search::run(collie_search::cli::search::SearchArgs {
                 pattern,
+                path: search_path,
                 ..Default::default()
             })?;
             return Ok(if found { 0 } else { 1 });
@@ -319,13 +327,13 @@ fn run() -> anyhow::Result<i32> {
         (Some(Commands::Config { path, init }), _) => {
             if init {
                 let root = collie_search::daemon::resolve_worktree_root(path)?;
-                let config_path = root.join(".collie").join("config.toml");
+                let config_path = collie_search::paths::preferred_config_path(&root);
+                let legacy_config_path = collie_search::paths::legacy_config_path(&root);
                 if config_path.exists() {
                     println!("config already exists at {}", config_path.display());
+                } else if legacy_config_path.exists() {
+                    println!("config already exists at {}", legacy_config_path.display());
                 } else {
-                    if let Some(parent) = config_path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
                     std::fs::write(&config_path, collie_search::config::CONFIG_TEMPLATE)?;
                     println!("Created config at {}", config_path.display());
                 }

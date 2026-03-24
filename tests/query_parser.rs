@@ -1,6 +1,11 @@
 use collie_search::symbols::SymbolKind;
 use collie_search::symbols::query::parse_query;
 
+fn assert_kinds(input: &str, expected: &[SymbolKind]) {
+    let parsed = parse_query(input);
+    assert_eq!(parsed.kinds, expected);
+}
+
 #[test]
 fn plain_query_has_no_filters() {
     let parsed = parse_query("handler");
@@ -11,7 +16,7 @@ fn plain_query_has_no_filters() {
 #[test]
 fn kind_filter_parsed() {
     let parsed = parse_query("kind:fn handler");
-    assert_eq!(parsed.kind, Some(SymbolKind::Function));
+    assert_eq!(parsed.kinds, vec![SymbolKind::Function, SymbolKind::Method]);
     assert_eq!(parsed.name_pattern, "handler");
 }
 
@@ -32,7 +37,7 @@ fn path_filter_parsed() {
 #[test]
 fn qname_filter_parsed() {
     let parsed = parse_query("kind:method qname:Server::start%");
-    assert_eq!(parsed.kind, Some(SymbolKind::Method));
+    assert_eq!(parsed.kinds, vec![SymbolKind::Method]);
     assert_eq!(
         parsed.qualified_name_pattern.as_deref(),
         Some("Server::start%")
@@ -43,7 +48,7 @@ fn qname_filter_parsed() {
 #[test]
 fn multiple_filters_parsed() {
     let parsed = parse_query("kind:fn lang:go path:cmd/ init%");
-    assert_eq!(parsed.kind, Some(SymbolKind::Function));
+    assert_eq!(parsed.kinds, vec![SymbolKind::Function, SymbolKind::Method]);
     assert_eq!(parsed.language.as_deref(), Some("go"));
     assert_eq!(parsed.path_prefix.as_deref(), Some("cmd/"));
     assert_eq!(parsed.name_pattern, "init%");
@@ -51,18 +56,15 @@ fn multiple_filters_parsed() {
 
 #[test]
 fn kind_aliases_normalized() {
-    assert_eq!(parse_query("kind:fn").kind, Some(SymbolKind::Function));
-    assert_eq!(
-        parse_query("kind:function").kind,
-        Some(SymbolKind::Function)
-    );
-    assert_eq!(parse_query("kind:struct").kind, Some(SymbolKind::Struct));
-    assert_eq!(parse_query("kind:var").kind, Some(SymbolKind::Variable));
-    assert_eq!(parse_query("kind:const").kind, Some(SymbolKind::Constant));
-    assert_eq!(parse_query("kind:mod").kind, Some(SymbolKind::Module));
-    assert_eq!(parse_query("kind:prop").kind, Some(SymbolKind::Property));
-    assert_eq!(parse_query("kind:type").kind, Some(SymbolKind::TypeAlias));
-    assert_eq!(parse_query("kind:trait").kind, Some(SymbolKind::Trait));
+    assert_kinds("kind:fn", &[SymbolKind::Function, SymbolKind::Method]);
+    assert_kinds("kind:function", &[SymbolKind::Function, SymbolKind::Method]);
+    assert_kinds("kind:struct", &[SymbolKind::Struct]);
+    assert_kinds("kind:var", &[SymbolKind::Variable]);
+    assert_kinds("kind:const", &[SymbolKind::Constant]);
+    assert_kinds("kind:mod", &[SymbolKind::Module]);
+    assert_kinds("kind:prop", &[SymbolKind::Property]);
+    assert_kinds("kind:type", &[SymbolKind::TypeAlias]);
+    assert_kinds("kind:trait", &[SymbolKind::Trait]);
 }
 
 #[test]
@@ -91,7 +93,7 @@ fn name_pattern_preserves_wildcards() {
 #[test]
 fn empty_name_pattern_means_all() {
     let parsed = parse_query("kind:fn lang:go");
-    assert_eq!(parsed.kind, Some(SymbolKind::Function));
+    assert_eq!(parsed.kinds, vec![SymbolKind::Function, SymbolKind::Method]);
     assert_eq!(parsed.language.as_deref(), Some("go"));
     assert_eq!(parsed.name_pattern, "");
 }

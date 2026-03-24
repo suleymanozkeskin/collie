@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::hash::Hasher;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -85,25 +87,15 @@ struct DaemonPaths {
     log_path: PathBuf,
 }
 
+fn stop_marker_path(paths: &DaemonPaths) -> PathBuf {
+    paths.collie_dir.join("stop-requested")
+}
+
 pub fn start(path: PathBuf, foreground: bool, restart_on_crash: bool) -> Result<()> {
     let root = resolve_worktree_root(path)?;
-    let paths = DaemonPaths::for_root(root);
-    let first_run = !paths.collie_dir.exists();
-
-    // If .collie/ exists but wasn't created by us, don't overwrite it
-    if !first_run && !is_collie_dir(&paths.collie_dir) {
-        anyhow::bail!(
-            "{} exists but does not appear to be a collie index directory. \
-             Remove it manually or choose a different repository path.",
-            paths.collie_dir.display()
-        );
-    }
-
+    let paths = DaemonPaths::for_root(root)?;
+    crate::paths::migrate_legacy_runtime(&paths.root, &paths.collie_dir)?;
     fs::create_dir_all(&paths.collie_dir)?;
-
-    if first_run {
-        print_gitignore_tip(&paths.root);
-    }
 
     if let Some(pid) = read_pid_if_alive(&paths.pid_path) {
         println!("Collie daemon already running for {}", paths.root.display());
@@ -120,11 +112,7 @@ pub fn start(path: PathBuf, foreground: bool, restart_on_crash: bool) -> Result<
         let result = run_daemon(&paths);
         if let Err(ref err) = result {
             let mut error_state = read_state(&paths.state_path).unwrap_or_else(|_| {
-                DaemonState::new_stopped(
-                    &paths,
-                    Some(std::process::id()),
-                    err.to_string(),
-                )
+                DaemonState::new_stopped(&paths, Some(std::process::id()), err.to_string())
             });
             error_state.status = DaemonStatus::Error;
             error_state.last_error = Some(format!("{err:#}"));
@@ -153,11 +141,14 @@ pub fn start(path: PathBuf, foreground: bool, restart_on_crash: bool) -> Result<
                 .unwrap_or(false);
             if exited {
                 // Check if the daemon exited intentionally (via `collie stop`)
-                let was_intentional = paths.state_path.exists()
-                    && read_state(&paths.state_path)
-                        .map(|s| s.status == DaemonStatus::Stopped)
-                        .unwrap_or(false);
+                let stop_marker = stop_marker_path(&paths);
+                let was_intentional = stop_marker.exists()
+                    || (paths.state_path.exists()
+                        && read_state(&paths.state_path)
+                            .map(|s| s.status == DaemonStatus::Stopped)
+                            .unwrap_or(false));
                 if was_intentional {
+                    let _ = fs::remove_file(stop_marker);
                     break;
                 }
                 println!("Collie daemon crashed, restarting...");
@@ -195,15 +186,25 @@ fn spawn_daemon_child(paths: &DaemonPaths) -> Result<std::process::Child> {
         .with_context(|| format!("failed to open daemon log at {:?}", paths.log_path))?;
     let log_file_err = log_file.try_clone()?;
 
-    let mut child = Command::new(exe)
+    let mut command = Command::new(exe);
+    command
         .arg("__daemon")
         .arg(&paths.root)
         .current_dir(&paths.root)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_file_err))
-        .spawn()
-        .context("failed to start daemon process")?;
+        .stderr(Stdio::from(log_file_err));
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
+    let mut child = command.spawn().context("failed to start daemon process")?;
 
     wait_for_ready(paths, Some(&mut child))?;
     Ok(child)
@@ -211,7 +212,8 @@ fn spawn_daemon_child(paths: &DaemonPaths) -> Result<std::process::Child> {
 
 pub fn stop(path: PathBuf) -> Result<()> {
     let root = resolve_worktree_root(path)?;
-    let paths = DaemonPaths::for_root(root);
+    let paths = DaemonPaths::for_root(root)?;
+    crate::paths::migrate_legacy_runtime(&paths.root, &paths.collie_dir)?;
 
     let Some(pid) = read_pid(&paths.pid_path)? else {
         println!("Collie daemon is not running for {}", paths.root.display());
@@ -224,30 +226,7 @@ pub fn stop(path: PathBuf) -> Result<()> {
         return Ok(());
     }
 
-    send_sigterm(pid)?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while std::time::Instant::now() < deadline {
-        let pid_missing = !paths.pid_path.exists();
-        let stopped_state = paths.state_path.exists()
-            && read_state(&paths.state_path)
-                .map(|state| state.status == DaemonStatus::Stopped)
-                .unwrap_or(false);
-
-        if !is_pid_alive(pid) || pid_missing || stopped_state {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-
-    let pid_missing = !paths.pid_path.exists();
-    let stopped_state = paths.state_path.exists()
-        && read_state(&paths.state_path)
-            .map(|state| state.status == DaemonStatus::Stopped)
-            .unwrap_or(false);
-
-    if is_pid_alive(pid) && !pid_missing && !stopped_state {
-        return Err(anyhow!("timed out waiting for daemon {} to stop", pid));
-    }
+    stop_running_daemon(&paths, pid)?;
 
     if paths.pid_path.exists() {
         let _ = fs::remove_file(&paths.pid_path);
@@ -262,13 +241,15 @@ pub fn stop(path: PathBuf) -> Result<()> {
         write_state(&paths.state_path, &state)?;
     }
 
+    let _ = fs::remove_file(stop_marker_path(&paths));
     println!("Stopped Collie daemon for {}", paths.root.display());
     Ok(())
 }
 
 pub fn status(path: PathBuf, json: bool) -> Result<()> {
     let root = resolve_worktree_root(path)?;
-    let paths = DaemonPaths::for_root(root);
+    let paths = DaemonPaths::for_root(root)?;
+    crate::paths::migrate_legacy_runtime(&paths.root, &paths.collie_dir)?;
     let pid = read_pid(&paths.pid_path)?;
 
     if let Some(pid) = pid {
@@ -357,24 +338,15 @@ struct RepoSnapshot {
 /// and cleans up old generations. Does not start a watcher.
 pub fn rebuild(path: PathBuf) -> Result<RebuildResult> {
     let root = resolve_worktree_root(path)?;
-    let paths = DaemonPaths::for_root(root);
-
-    if paths.collie_dir.exists() && !is_collie_dir(&paths.collie_dir) {
-        anyhow::bail!(
-            "{} exists but does not appear to be a collie index directory",
-            paths.collie_dir.display()
-        );
-    }
+    let paths = DaemonPaths::for_root(root)?;
+    crate::paths::migrate_legacy_runtime(&paths.root, &paths.collie_dir)?;
 
     fs::create_dir_all(&paths.collie_dir)?;
+    cleanup_stale_files(&paths)?;
 
     // Stop running daemon if any
     if let Some(pid) = read_pid_if_alive(&paths.pid_path) {
-        send_sigterm(pid)?;
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::time::Instant::now() < deadline && is_pid_alive(pid) {
-            thread::sleep(Duration::from_millis(50));
-        }
+        stop_running_daemon(&paths, pid)?;
         if paths.pid_path.exists() {
             let _ = fs::remove_file(&paths.pid_path);
         }
@@ -385,6 +357,7 @@ pub fn rebuild(path: PathBuf) -> Result<RebuildResult> {
     let gen_dir = gen_mgr.create_generation()?;
 
     let mut builder = IndexBuilder::new(&gen_dir, &config)?;
+    builder.set_worktree_root(paths.root.clone());
     let (skips, snapshot) = bulk_rebuild(&paths.root, &mut builder, &config)?;
     builder.save()?;
     let stats = builder.stats();
@@ -408,80 +381,43 @@ pub fn rebuild(path: PathBuf) -> Result<RebuildResult> {
 
 /// Returns true if a collie daemon is alive for the given worktree root.
 pub fn is_daemon_alive(worktree_root: &Path) -> bool {
-    let pid_path = worktree_root.join(".collie").join("collie.pid");
-    read_pid_if_alive(&pid_path).is_some()
+    let Ok(state_dir) = crate::paths::repo_state_dir(worktree_root) else {
+        return false;
+    };
+    read_pid_if_alive(&state_dir.join("collie.pid")).is_some()
 }
 
 /// Touch the activity marker so the daemon knows a client is active.
 /// Called by `collie search` on every query.
-/// Check if a .collie/ directory was created by collie (has our marker files).
-/// An empty directory is considered ours (just created by create_dir_all).
-fn is_collie_dir(dir: &Path) -> bool {
-    if !dir.exists() {
-        return false;
-    }
-    // Empty dir is fine — we just created it
-    if fs::read_dir(dir).map_or(true, |mut d| d.next().is_none()) {
-        return true;
-    }
-    // Must have at least one of our known files
-    dir.join("CURRENT").exists()
-        || dir.join("daemon-state.json").exists()
-        || dir.join("generations").is_dir()
-        || dir.join("collie.pid").exists()
-        || dir.join("daemon.log").exists()
-        || dir.join("config.toml").exists()
-}
-
-/// Print a one-time tip about adding .collie to global gitignore.
-fn print_gitignore_tip(worktree_root: &Path) {
-    // Only suggest if this is a git repo
-    if !worktree_root.join(".git").exists() {
-        return;
-    }
-    // Check if .collie is already ignored
-    let output = std::process::Command::new("git")
-        .args(["check-ignore", "-q", ".collie"])
-        .current_dir(worktree_root)
-        .output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            return; // already ignored
-        }
-    }
-    eprintln!("hint: add .collie to your global gitignore to avoid committing index files:");
-    eprintln!("  echo .collie >> ~/.config/git/ignore");
-    eprintln!();
-}
-
-/// Remove the .collie directory for a repository.
+/// Remove the external Collie runtime state for a repository.
 pub fn clean(path: PathBuf) -> Result<()> {
     let root = resolve_worktree_root(path)?;
-    let collie_dir = root.join(".collie");
+    let paths = DaemonPaths::for_root(root)?;
+    let collie_dir = paths.collie_dir.clone();
+    let had_legacy = crate::paths::legacy_runtime_exists(&paths.root);
     if !collie_dir.exists() {
-        println!("No collie data found for {}", root.display());
+        crate::paths::cleanup_legacy_runtime(&paths.root)?;
+        if had_legacy {
+            println!(
+                "Removed legacy Collie runtime data for {}",
+                paths.root.display()
+            );
+        } else {
+            println!("No collie runtime data found for {}", paths.root.display());
+        }
         return Ok(());
     }
 
-    if !is_collie_dir(&collie_dir) {
-        anyhow::bail!(
-            "{} exists but does not appear to be a collie index directory",
-            collie_dir.display()
-        );
-    }
-
     // Stop the daemon first if running
-    if let Some(pid) = read_pid_if_alive(&collie_dir.join("collie.pid")) {
-        let _ = send_sigterm(pid);
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::time::Instant::now() < deadline && is_pid_alive(pid) {
-            thread::sleep(Duration::from_millis(50));
-        }
+    if let Some(pid) = read_pid_if_alive(&paths.pid_path) {
+        stop_running_daemon(&paths, pid)
+            .context("failed to stop running daemon before clean")?;
     }
 
     let size = dir_size(&collie_dir);
     fs::remove_dir_all(&collie_dir)
         .with_context(|| format!("failed to remove {:?}", collie_dir))?;
+    crate::paths::cleanup_legacy_runtime(&paths.root)?;
     println!(
         "Removed {} ({:.1} MB)",
         collie_dir.display(),
@@ -491,7 +427,10 @@ pub fn clean(path: PathBuf) -> Result<()> {
 }
 
 pub fn touch_activity(worktree_root: &Path) {
-    let marker = worktree_root.join(".collie").join("last_activity");
+    let Ok(state_dir) = crate::paths::repo_state_dir(worktree_root) else {
+        return;
+    };
+    let marker = state_dir.join("last_activity");
     let _ = OpenOptions::new()
         .create(true)
         .write(true)
@@ -505,23 +444,23 @@ fn secs_since_last_activity(collie_dir: &Path) -> Option<u64> {
     let marker = collie_dir.join("last_activity");
     let meta = fs::metadata(&marker).ok()?;
     let modified = meta.modified().ok()?;
-    SystemTime::now().duration_since(modified).ok().map(|d| d.as_secs())
+    SystemTime::now()
+        .duration_since(modified)
+        .ok()
+        .map(|d| d.as_secs())
 }
 
 pub fn run_internal_daemon(path: PathBuf) -> Result<()> {
     let root = resolve_worktree_root(path)?;
-    let paths = DaemonPaths::for_root(root);
+    let paths = DaemonPaths::for_root(root)?;
+    crate::paths::migrate_legacy_runtime(&paths.root, &paths.collie_dir)?;
     let result = run_daemon(&paths);
     if let Err(ref err) = result {
         // Persist the error so `collie status` can report it, even if the
         // process is about to exit.  Without this the state file stays at
         // "Running" and the daemon log may be empty (buffered stderr).
         let mut error_state = read_state(&paths.state_path).unwrap_or_else(|_| {
-            DaemonState::new_stopped(
-                &paths,
-                Some(std::process::id()),
-                err.to_string(),
-            )
+            DaemonState::new_stopped(&paths, Some(std::process::id()), err.to_string())
         });
         error_state.status = DaemonStatus::Error;
         error_state.last_error = Some(format!("{err:#}"));
@@ -566,6 +505,7 @@ pub fn resolve_worktree_root<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
 
 fn run_daemon(paths: &DaemonPaths) -> Result<()> {
     fs::create_dir_all(&paths.collie_dir)?;
+    let _ = fs::remove_file(stop_marker_path(paths));
     let pid = std::process::id();
     let config = CollieConfig::load(&paths.root);
 
@@ -575,7 +515,8 @@ fn run_daemon(paths: &DaemonPaths) -> Result<()> {
     let gen_mgr = GenerationManager::new(&paths.collie_dir);
     let reusable_gen = reusable_active_generation(&gen_mgr, &paths.root, &config)?;
     let (active_gen, skips, stats) = if let Some(active_gen) = reusable_gen {
-        let builder = IndexBuilder::new(&active_gen, &config)?;
+        let mut builder = IndexBuilder::new(&active_gen, &config)?;
+        builder.set_worktree_root(paths.root.clone());
         let stats = builder.stats();
         (
             active_gen,
@@ -592,6 +533,7 @@ fn run_daemon(paths: &DaemonPaths) -> Result<()> {
         // Scoped so the builder (and its Tantivy writer lock) is dropped before the watcher starts.
         let (skips, stats) = {
             let mut builder = IndexBuilder::new(&gen_dir, &config)?;
+            builder.set_worktree_root(paths.root.clone());
             // Writer heap is set dynamically in bulk_rebuild_parallel based on file count
             let (skips, snapshot) = bulk_rebuild(&paths.root, &mut builder, &config)?;
             builder.save()?;
@@ -922,9 +864,23 @@ fn bulk_rebuild(
     let mut snapshot_entries: Vec<(String, u64, u128)> = Vec::new();
 
     if paths.len() >= PARALLEL_REBUILD_THRESHOLD {
-        bulk_rebuild_parallel(root, builder, config, &paths, &mut skips, &mut snapshot_entries)?;
+        bulk_rebuild_parallel(
+            root,
+            builder,
+            config,
+            &paths,
+            &mut skips,
+            &mut snapshot_entries,
+        )?;
     } else {
-        bulk_rebuild_sequential(root, builder, config, &paths, &mut skips, &mut snapshot_entries)?;
+        bulk_rebuild_sequential(
+            root,
+            builder,
+            config,
+            &paths,
+            &mut skips,
+            &mut snapshot_entries,
+        )?;
     }
 
     // --- Phase 3: Compute snapshot from collected entries ---
@@ -1032,27 +988,27 @@ fn bulk_rebuild_parallel(
         let adapter_registry = crate::symbols::adapters::AdapterRegistry::default();
 
         owned_paths.par_iter().for_each(|path| {
-            let payload = preprocess_file(
-                path,
-                &worktree_root,
-                max_file_size,
-                &adapter_registry,
-            );
+            let payload = preprocess_file(path, &worktree_root, max_file_size, &adapter_registry);
             let _ = tx.send(payload);
         });
     });
 
     for payload in rx {
         match payload {
-            IndexPayload::Ready { path, symbols, body_tokens, body_reversed_tokens, file_size, modified_ns } => {
+            IndexPayload::Ready {
+                path,
+                symbols,
+                body_tokens,
+                body_reversed_tokens,
+                file_size,
+                modified_ns,
+            } => {
                 let rel = path.strip_prefix(root).unwrap_or(&path);
-                snapshot_entries.push((
-                    rel.to_string_lossy().to_string(),
-                    file_size,
-                    modified_ns,
-                ));
+                snapshot_entries.push((rel.to_string_lossy().to_string(), file_size, modified_ns));
 
-                if let Err(err) = builder.index_pretokenized(&path, body_tokens, body_reversed_tokens, &symbols) {
+                if let Err(err) =
+                    builder.index_pretokenized(&path, body_tokens, body_reversed_tokens, &symbols)
+                {
                     let reason = err.to_string();
                     eprintln!("warning: skipping {}: {}", path.display(), reason);
                     skips.count += 1;
@@ -1126,7 +1082,10 @@ fn preprocess_file(
         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
 
     let symbols = if let Some(adapter) = adapter_registry.adapter_for_path(path) {
-        let repo_rel = path.strip_prefix(worktree_root).unwrap_or(path).to_path_buf();
+        let repo_rel = path
+            .strip_prefix(worktree_root)
+            .unwrap_or(path)
+            .to_path_buf();
         // Get or create a thread-local parser for this language
         thread_local! {
             static PARSERS: std::cell::RefCell<std::collections::HashMap<String, tree_sitter::Parser>> =
@@ -1136,7 +1095,9 @@ fn preprocess_file(
             let mut parsers = parsers.borrow_mut();
             let lang_id = adapter.language_id().to_string();
             let parser = parsers.entry(lang_id).or_insert_with(|| {
-                adapter_registry.create_parser_for(adapter).expect("parser creation")
+                adapter_registry
+                    .create_parser_for(adapter)
+                    .expect("parser creation")
             });
             adapter.extract_symbols_with_parser(&repo_rel, &content, parser)
         })
@@ -1238,6 +1199,50 @@ fn send_sigterm(pid: u32) -> Result<()> {
     } else {
         Err(anyhow!("failed to send SIGTERM to pid {}", pid))
     }
+}
+
+fn stop_running_daemon(paths: &DaemonPaths, pid: u32) -> Result<()> {
+    let stop_marker = stop_marker_path(paths);
+    fs::write(&stop_marker, b"").with_context(|| {
+        format!(
+            "failed to write intentional stop marker at {:?}",
+            stop_marker
+        )
+    })?;
+
+    let result = (|| {
+        send_sigterm(pid)?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let pid_missing = !paths.pid_path.exists();
+            let stopped_state = paths.state_path.exists()
+                && read_state(&paths.state_path)
+                    .map(|state| state.status == DaemonStatus::Stopped)
+                    .unwrap_or(false);
+
+            if !is_pid_alive(pid) || pid_missing || stopped_state {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let pid_missing = !paths.pid_path.exists();
+        let stopped_state = paths.state_path.exists()
+            && read_state(&paths.state_path)
+                .map(|state| state.status == DaemonStatus::Stopped)
+                .unwrap_or(false);
+
+        if is_pid_alive(pid) && !pid_missing && !stopped_state {
+            anyhow::bail!("timed out waiting for daemon {} to stop", pid);
+        }
+
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(stop_marker);
+    }
+    result
 }
 
 fn read_state(path: &Path) -> Result<DaemonState> {
@@ -1383,16 +1388,16 @@ fn print_running_status(paths: &DaemonPaths, state: &DaemonState) {
 }
 
 impl DaemonPaths {
-    fn for_root(root: PathBuf) -> Self {
-        let collie_dir = root.join(".collie");
-        Self {
+    fn for_root(root: PathBuf) -> Result<Self> {
+        let collie_dir = crate::paths::repo_state_dir(&root)?;
+        Ok(Self {
             index_path: collie_dir.clone(),
             pid_path: collie_dir.join("collie.pid"),
             state_path: collie_dir.join("daemon-state.json"),
             log_path: collie_dir.join("daemon.log"),
             root,
             collie_dir,
-        }
+        })
     }
 }
 

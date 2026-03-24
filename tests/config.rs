@@ -98,12 +98,31 @@ fn config_max_file_size_override() -> Result<()> {
 }
 
 #[test]
+fn config_prefers_new_path_over_legacy() -> Result<()> {
+    let worktree = create_worktree()?;
+    let config_dir = worktree.path().join(".collie");
+    fs::create_dir_all(&config_dir)?;
+    fs::write(
+        config_dir.join("config.toml"),
+        "[search]\ndefault_limit = 10\n",
+    )?;
+    fs::write(
+        worktree.path().join(".collie.toml"),
+        "[search]\ndefault_limit = 70\n",
+    )?;
+
+    let config = CollieConfig::load(worktree.path());
+    assert_eq!(config.search.default_limit, 70);
+    Ok(())
+}
+
+#[test]
 fn config_init_creates_example_file() -> Result<()> {
     let worktree = create_worktree()?;
     let output = run_collie(worktree.path(), &["config", "--init"])?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
 
-    let config_path = worktree.path().join(".collie").join("config.toml");
+    let config_path = worktree.path().join(".collie.toml");
     assert!(config_path.exists());
 
     let content = fs::read_to_string(&config_path)?;
@@ -119,14 +138,13 @@ fn config_init_creates_example_file() -> Result<()> {
 #[test]
 fn config_init_does_not_overwrite_existing() -> Result<()> {
     let worktree = create_worktree()?;
-    let config_dir = worktree.path().join(".collie");
-    fs::create_dir_all(&config_dir)?;
-    fs::write(config_dir.join("config.toml"), "# my custom config\n")?;
+    let config_path = worktree.path().join(".collie.toml");
+    fs::write(&config_path, "# my custom config\n")?;
 
     let output = run_collie(worktree.path(), &["config", "--init"])?;
     assert!(output.status.success());
 
-    let content = fs::read_to_string(config_dir.join("config.toml"))?;
+    let content = fs::read_to_string(&config_path)?;
     assert_eq!(content, "# my custom config\n");
 
     assert!(stdout(&output).contains("config already exists"));

@@ -108,8 +108,7 @@ const RESET: &str = "\x1b[0m";
 /// Run a search. Returns `Ok(true)` if results were found, `Ok(false)` if not.
 pub fn run(args: SearchArgs) -> Result<bool> {
     let start_dir = match &args.path {
-        Some(p) => std::fs::canonicalize(p)
-            .with_context(|| format!("invalid path: {:?}", p))?,
+        Some(p) => std::fs::canonicalize(p).with_context(|| format!("invalid path: {:?}", p))?,
         None => std::env::current_dir()?,
     };
     let worktree_root = find_worktree_root(&start_dir)?;
@@ -125,14 +124,16 @@ pub fn run(args: SearchArgs) -> Result<bool> {
     );
     let symbol_query = parse_query(&args.pattern);
     let color = use_color(&args.color) && !matches!(args.format, OutputFormat::Json);
-    let glob_pattern = args.glob.as_deref()
+    let glob_pattern = args
+        .glob
+        .as_deref()
         .map(|g| glob::Pattern::new(g).with_context(|| format!("invalid glob pattern: {}", g)))
         .transpose()?;
 
     if !crate::daemon::is_daemon_alive(&worktree_root) {
         // Only warn if the index may actually be stale. After a clean rebuild
         // with no daemon, the index is perfectly valid — no need to alarm.
-        let collie_dir = worktree_root.join(".collie");
+        let collie_dir = crate::paths::repo_state_dir(&worktree_root)?;
         let gen_mgr = GenerationManager::new(&collie_dir);
         if gen_mgr.needs_rebuild() {
             eprintln!("warning: collie daemon is not running and index may be stale or corrupt");
@@ -258,7 +259,9 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
         let json_results: Vec<JsonResult> = results
             .iter()
             .map(|r| JsonResult {
-                path: relative_path(&r.file_path, opts.worktree_root).to_string_lossy().to_string(),
+                path: relative_path(&r.file_path, opts.worktree_root)
+                    .to_string_lossy()
+                    .to_string(),
                 line: None,
                 content: None,
                 kind: None,
@@ -267,12 +270,15 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 signature: None,
             })
             .collect();
-        println!("{}", serde_json::to_string(&JsonOutput {
-            pattern: opts.pattern.to_string(),
-            search_type: "token".to_string(),
-            count: json_results.len(),
-            results: json_results,
-        })?);
+        println!(
+            "{}",
+            serde_json::to_string(&JsonOutput {
+                pattern: opts.pattern.to_string(),
+                search_type: "token".to_string(),
+                count: json_results.len(),
+                results: json_results,
+            })?
+        );
         return Ok(found);
     }
 
@@ -297,11 +303,17 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
 
     match opts.format {
         OutputFormat::Default => {
-            println!("Found {} results for pattern: {}", results.len(), opts.pattern);
+            println!(
+                "Found {} results for pattern: {}",
+                results.len(),
+                opts.pattern
+            );
             if opts.no_snippets {
                 println!();
                 for (idx, result) in results.iter().enumerate() {
-                    if idx > 0 { println!(); }
+                    if idx > 0 {
+                        println!();
+                    }
                     let rel = relative_path(&result.file_path, opts.worktree_root);
                     println!("{}. {}", idx + 1, rel.display());
                 }
@@ -309,9 +321,18 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
                     println!();
-                    match extract_snippets(&result.file_path, opts.pattern, opts.before_ctx, opts.after_ctx) {
-                        SnippetResult::Found(snippets) => print_snippets_default(&rel, &snippets, opts.color),
-                        SnippetResult::FileNotFound => println!("{} (file not found, index may be stale)", rel.display()),
+                    match extract_snippets(
+                        &result.file_path,
+                        opts.pattern,
+                        opts.before_ctx,
+                        opts.after_ctx,
+                    ) {
+                        SnippetResult::Found(snippets) => {
+                            print_snippets_default(&rel, &snippets, opts.color)
+                        }
+                        SnippetResult::FileNotFound => {
+                            println!("{} (file not found, index may be stale)", rel.display())
+                        }
                         SnippetResult::NoMatches => {
                             println!("{}", rel.display());
                         }
@@ -329,7 +350,12 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 let mut first_group = true;
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
-                    if let SnippetResult::Found(snippets) = extract_snippets(&result.file_path, opts.pattern, opts.before_ctx, opts.after_ctx) {
+                    if let SnippetResult::Found(snippets) = extract_snippets(
+                        &result.file_path,
+                        opts.pattern,
+                        opts.before_ctx,
+                        opts.after_ctx,
+                    ) {
                         print_snippets_plain(&rel, &snippets, &mut first_group, opts.color);
                     }
                 }
@@ -341,7 +367,8 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
 }
 
 fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
-    let results = builder.search_regex(opts.pattern, opts.limit, opts.multiline, opts.ignore_case)?;
+    let results =
+        builder.search_regex(opts.pattern, opts.limit, opts.multiline, opts.ignore_case)?;
     let results: Vec<_> = results
         .into_iter()
         .filter(|r| match_glob(&r.file_path, opts))
@@ -387,12 +414,15 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
             })
             .collect();
         let count = json_results.len();
-        println!("{}", serde_json::to_string(&JsonOutput {
-            pattern: opts.pattern.to_string(),
-            search_type: "regex".to_string(),
-            count,
-            results: json_results,
-        })?);
+        println!(
+            "{}",
+            serde_json::to_string(&JsonOutput {
+                pattern: opts.pattern.to_string(),
+                search_type: "regex".to_string(),
+                count,
+                results: json_results,
+            })?
+        );
         return Ok(found);
     }
 
@@ -417,15 +447,25 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
 
     match opts.format {
         OutputFormat::Default => {
-            println!("Found {} file(s) with matches for regex: {}", results.len(), opts.pattern);
+            println!(
+                "Found {} file(s) with matches for regex: {}",
+                results.len(),
+                opts.pattern
+            );
             for result in &results {
                 let rel = relative_path(&result.file_path, opts.worktree_root);
                 println!();
                 if opts.no_snippets {
                     println!("{}", rel.display());
                 } else {
-                    let match_lines: Vec<usize> = result.matches.iter().map(|m| m.line_number).collect();
-                    match build_context_snippets(&result.file_path, &match_lines, opts.before_ctx, opts.after_ctx) {
+                    let match_lines: Vec<usize> =
+                        result.matches.iter().map(|m| m.line_number).collect();
+                    match build_context_snippets(
+                        &result.file_path,
+                        &match_lines,
+                        opts.before_ctx,
+                        opts.after_ctx,
+                    ) {
                         Some(snippets) => print_snippets_default(&rel, &snippets, opts.color),
                         None => println!("{} (file not found, index may be stale)", rel.display()),
                     }
@@ -442,8 +482,14 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 let mut first_group = true;
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
-                    let match_lines: Vec<usize> = result.matches.iter().map(|m| m.line_number).collect();
-                    if let Some(snippets) = build_context_snippets(&result.file_path, &match_lines, opts.before_ctx, opts.after_ctx) {
+                    let match_lines: Vec<usize> =
+                        result.matches.iter().map(|m| m.line_number).collect();
+                    if let Some(snippets) = build_context_snippets(
+                        &result.file_path,
+                        &match_lines,
+                        opts.before_ctx,
+                        opts.after_ctx,
+                    ) {
                         print_snippets_plain(&rel, &snippets, &mut first_group, opts.color);
                     }
                 }
@@ -475,7 +521,9 @@ fn match_glob(path: &Path, opts: &SearchOpts) -> bool {
         Some(pat) => {
             let rel = path.strip_prefix(opts.worktree_root).unwrap_or(path);
             pat.matches_path(rel)
-                || rel.file_name().map_or(false, |n| pat.matches(n.to_string_lossy().as_ref()))
+                || rel
+                    .file_name()
+                    .map_or(false, |n| pat.matches(n.to_string_lossy().as_ref()))
         }
         None => true,
     }
@@ -497,7 +545,12 @@ fn print_snippets_default(relative: &Path, snippets: &[Snippet], color: bool) {
         let width = max_line_num.to_string().len();
         for (line_num, content, is_match) in &snippet.lines {
             if color && *is_match {
-                println!("  {GREEN}{:>width$}{RESET} | {}", line_num, content, width = width);
+                println!(
+                    "  {GREEN}{:>width$}{RESET} | {}",
+                    line_num,
+                    content,
+                    width = width
+                );
             } else {
                 println!("  {:>width$} | {}", line_num, content, width = width);
             }
@@ -505,7 +558,12 @@ fn print_snippets_default(relative: &Path, snippets: &[Snippet], color: bool) {
     }
 }
 
-fn print_snippets_plain(relative: &Path, snippets: &[Snippet], first_group: &mut bool, color: bool) {
+fn print_snippets_plain(
+    relative: &Path,
+    snippets: &[Snippet],
+    first_group: &mut bool,
+    color: bool,
+) {
     let rel_str = relative.display().to_string();
     for snippet in snippets {
         if !*first_group {
@@ -515,7 +573,10 @@ fn print_snippets_plain(relative: &Path, snippets: &[Snippet], first_group: &mut
         for (line_num, content, is_match) in &snippet.lines {
             if *is_match {
                 if color {
-                    println!("{MAGENTA}{}{RESET}:{GREEN}{}{RESET}:{}", rel_str, line_num, content);
+                    println!(
+                        "{MAGENTA}{}{RESET}:{GREEN}{}{RESET}:{}",
+                        rel_str, line_num, content
+                    );
                 } else {
                     println!("{}:{}:{}", rel_str, line_num, content);
                 }
@@ -562,7 +623,12 @@ fn print_symbol_results(pattern: &str, results: &[SymbolResult], color: bool) {
             println!();
         }
         if color {
-            println!("{}. {BOLD}{}{RESET} ({})", idx + 1, result.name, result.kind.as_str());
+            println!(
+                "{}. {BOLD}{}{RESET} ({})",
+                idx + 1,
+                result.name,
+                result.kind.as_str()
+            );
             println!(
                 "   {MAGENTA}{}:{}{RESET}  lang:{}",
                 result.repo_rel_path.display(),
@@ -696,7 +762,12 @@ enum SnippetResult {
 
 /// Extract code snippets for token search by finding match positions and
 /// building context windows.
-fn extract_snippets(file_path: &Path, pattern: &str, before_ctx: usize, after_ctx: usize) -> SnippetResult {
+fn extract_snippets(
+    file_path: &Path,
+    pattern: &str,
+    before_ctx: usize,
+    after_ctx: usize,
+) -> SnippetResult {
     let content = match std::fs::read_to_string(file_path) {
         Ok(c) => c,
         Err(_) => return SnippetResult::FileNotFound,
@@ -738,7 +809,8 @@ fn extract_snippets(file_path: &Path, pattern: &str, before_ctx: usize, after_ct
 // --- Path resolution ---
 
 fn find_index_path(worktree_root: &Path) -> Result<PathBuf> {
-    let candidate = worktree_root.join(".collie");
+    let candidate = crate::paths::repo_state_dir(worktree_root)?;
+    crate::paths::migrate_legacy_runtime(worktree_root, &candidate)?;
 
     if candidate.join("CURRENT").is_file() {
         let mgr = GenerationManager::new(&candidate);

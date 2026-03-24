@@ -14,7 +14,8 @@ fn setup_builder(root: &Path) -> Result<(PathBuf, IndexBuilder)> {
     let collie = collie_dir(root);
     let mgr = GenerationManager::new(&collie);
     let gen_dir = mgr.create_generation()?;
-    let builder = IndexBuilder::new(&gen_dir, &CollieConfig::default())?;
+    let mut builder = IndexBuilder::new(&gen_dir, &CollieConfig::default())?;
+    builder.set_worktree_root(common::canonical_root(root));
     Ok((gen_dir, builder))
 }
 

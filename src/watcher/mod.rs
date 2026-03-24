@@ -264,6 +264,7 @@ fn run_processor_loop(
     stop_flag: Arc<AtomicBool>,
 ) -> Result<()> {
     let mut builder = IndexBuilder::new(&index_path, &config)?;
+    builder.set_worktree_root(worktree_root.clone());
     // Disable segment merging for incremental updates.
     builder.set_no_merge();
     let mut pending: HashMap<PathBuf, ActionKind> = HashMap::new();

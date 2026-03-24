@@ -14,6 +14,7 @@ static WORKTREE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug)]
 pub struct Worktree {
     root: PathBuf,
+    state_home: PathBuf,
 }
 
 impl Worktree {
@@ -25,6 +26,7 @@ impl Worktree {
 impl Drop for Worktree {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
+        let _ = fs::remove_dir_all(&self.state_home);
     }
 }
 
@@ -41,8 +43,12 @@ pub fn create_worktree() -> Result<Worktree> {
             .as_nanos()
     );
     let root = base.join(unique);
+    let state_home = base.join(format!(
+        "{}-state-home",
+        root.file_name().unwrap().to_string_lossy()
+    ));
     fs::create_dir_all(root.join(".git"))?;
-    Ok(Worktree { root })
+    Ok(Worktree { root, state_home })
 }
 
 pub fn collie_bin() -> PathBuf {
@@ -50,7 +56,7 @@ pub fn collie_bin() -> PathBuf {
 }
 
 pub fn collie_dir(root: &Path) -> PathBuf {
-    canonical_root(root).join(".collie")
+    collie_search::paths::repo_state_dir_with_base(&canonical_root(root), &state_base(root))
 }
 
 pub fn index_path(root: &Path) -> PathBuf {
@@ -72,6 +78,7 @@ pub fn log_path(root: &Path) -> PathBuf {
 pub fn run_collie(root: &Path, args: &[&str]) -> Result<Output> {
     let output = Command::new(collie_bin())
         .current_dir(root)
+        .env(collie_search::paths::STATE_DIR_ENV, state_home(root))
         .args(args)
         .output()
         .with_context(|| format!("failed to run collie with args {:?}", args))?;
@@ -81,6 +88,7 @@ pub fn run_collie(root: &Path, args: &[&str]) -> Result<Output> {
 pub fn spawn_collie(root: &Path, args: &[&str]) -> Result<Child> {
     let child = Command::new(collie_bin())
         .current_dir(root)
+        .env(collie_search::paths::STATE_DIR_ENV, state_home(root))
         .args(args)
         .spawn()
         .with_context(|| format!("failed to spawn collie with args {:?}", args))?;
@@ -111,6 +119,7 @@ pub fn build_index(root: &Path, files: &[(&str, &str)]) -> Result<()> {
 
     let config = CollieConfig::default();
     let mut builder = IndexBuilder::new(&gen_dir, &config)?;
+    builder.set_worktree_root(canonical_root(root));
     for (relative, content) in files {
         let path = write_file(root, relative, content)?;
         builder.index_file(path)?;
@@ -123,6 +132,14 @@ pub fn build_index(root: &Path, files: &[(&str, &str)]) -> Result<()> {
 
 pub fn canonical_root(root: &Path) -> PathBuf {
     fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+}
+
+pub fn state_home(root: &Path) -> PathBuf {
+    canonical_root(root).with_extension("collie-state-home")
+}
+
+fn state_base(root: &Path) -> PathBuf {
+    state_home(root).join("collie")
 }
 
 pub fn read_state(root: &Path) -> Result<Value> {

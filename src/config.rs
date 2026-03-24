@@ -94,8 +94,10 @@ impl Default for SearchConfig {
 
 impl CollieConfig {
     pub fn load(worktree_root: &Path) -> Self {
-        let config_path = worktree_root.join(".collie").join("config.toml");
-        if config_path.exists() {
+        for config_path in crate::paths::config_path_candidates(worktree_root) {
+            if !config_path.exists() {
+                continue;
+            }
             match std::fs::read_to_string(&config_path) {
                 Ok(content) => match toml::from_str(&content) {
                     Ok(config) => return config,
@@ -118,7 +120,8 @@ impl CollieConfig {
 
 /// The example config template written by `collie config --init`.
 pub const CONFIG_TEMPLATE: &str = r#"# Collie configuration
-# Place this file at <worktree>/.collie/config.toml
+# Place this file at <worktree>/.collie.toml
+# Legacy <worktree>/.collie/config.toml is still supported for reads.
 
 [index]
 # max_file_size = 1048576
@@ -160,10 +163,8 @@ mod tests {
     #[test]
     fn load_partial_toml_merges_with_defaults() {
         let tmp = TempDir::new().unwrap();
-        let config_dir = tmp.path().join(".collie");
-        std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
-            config_dir.join("config.toml"),
+            tmp.path().join(".collie.toml"),
             "[search]\ndefault_limit = 50\n",
         )
         .unwrap();

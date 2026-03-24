@@ -1,13 +1,16 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tantivy::collector::{DocSetCollector, TopDocs};
+use tantivy::directory::error::LockError;
 use tantivy::indexer::NoMergePolicy;
 use tantivy::query::{BooleanQuery, Occur, RegexQuery, TermQuery};
 use tantivy::schema::{
     FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::tokenizer::PreTokenizedString;
-use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term, doc};
+use tantivy::{
+    Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, TantivyError, Term, doc,
+};
 
 use crate::indexer::tokenizer;
 use crate::symbols::{Symbol, SymbolKind, SymbolQuery, SymbolResult};
@@ -201,7 +204,7 @@ impl TantivyIndex {
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()
-            .context("failed to create tantivy reader")?;
+            .map_err(|err| annotate_reader_error(err, index_dir))?;
 
         Ok(Self {
             index,
@@ -259,7 +262,9 @@ impl TantivyIndex {
             .wait_merging_threads()
             .context("compact: merge wait failed")?;
 
-        self.reader.reload().context("compact: reader reload failed")?;
+        self.reader
+            .reload()
+            .context("compact: reader reload failed")?;
         let segment_count = self.reader.searcher().segment_readers().len();
 
         // Re-create writer with the appropriate merge policy for continued use
@@ -451,14 +456,6 @@ impl TantivyIndex {
             ));
         }
 
-        if let Some(path_prefix) = &query.path_prefix {
-            let pattern = format!("{}.*", regex::escape(&path_prefix.to_lowercase()));
-            let regex_query =
-                RegexQuery::from_pattern(&pattern, self.schema.sym_repo_rel_path_lower)
-                    .context("invalid path prefix regex")?;
-            subqueries.push((Occur::Must, Box::new(regex_query)));
-        }
-
         if !query.name_pattern.is_empty() {
             let name_query = self.build_name_query(&query.name_pattern)?;
             subqueries.push((Occur::Must, name_query));
@@ -480,6 +477,17 @@ impl TantivyIndex {
         for addr in doc_addresses {
             let doc: tantivy::TantivyDocument = searcher.doc(addr)?;
             results.push(self.doc_to_symbol_result(&doc));
+        }
+
+        if let Some(path_prefix) = &query.path_prefix {
+            let path_prefix = path_prefix.to_lowercase();
+            results.retain(|result| {
+                result
+                    .repo_rel_path
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .starts_with(&path_prefix)
+            });
         }
 
         results.sort_by(|a, b| {
@@ -627,11 +635,7 @@ impl TantivyIndex {
     }
 
     /// Search for tokens containing substring, ranked by BM25.
-    pub fn search_substring_ranked(
-        &self,
-        substring: &str,
-        limit: usize,
-    ) -> Vec<SearchResult> {
+    pub fn search_substring_ranked(&self, substring: &str, limit: usize) -> Vec<SearchResult> {
         let normalized = substring.to_lowercase();
         let pattern = format!(".*{}.*", regex::escape(&normalized));
         match RegexQuery::from_pattern(&pattern, self.schema.body) {
@@ -641,11 +645,7 @@ impl TantivyIndex {
     }
 
     /// Search for files containing ALL given tokens, ranked by BM25.
-    pub fn search_multi_term_ranked(
-        &self,
-        tokens: &[String],
-        limit: usize,
-    ) -> Vec<SearchResult> {
+    pub fn search_multi_term_ranked(&self, tokens: &[String], limit: usize) -> Vec<SearchResult> {
         let subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = tokens
             .iter()
             .map(|token| {
@@ -975,6 +975,24 @@ impl TantivyIndex {
             byte_end,
             doc: sym_doc,
         }
+    }
+}
+
+fn annotate_reader_error(err: TantivyError, index_dir: &Path) -> anyhow::Error {
+    let actionable = matches!(
+        &err,
+        TantivyError::LockFailure(LockError::IoError(io_error), _)
+            if io_error.kind() == std::io::ErrorKind::PermissionDenied
+    );
+
+    let err = anyhow::Error::new(err).context("failed to create tantivy reader");
+    if actionable {
+        err.context(format!(
+            "collie needs write access to {:?} to acquire Tantivy's META_LOCK; read-only access to a prebuilt index is not enough for search",
+            index_dir
+        ))
+    } else {
+        err
     }
 }
 

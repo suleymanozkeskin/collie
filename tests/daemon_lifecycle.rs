@@ -1,6 +1,8 @@
 mod common;
 
 use anyhow::Result;
+use collie_search::config::CollieConfig;
+use collie_search::indexer::IndexBuilder;
 use collie_search::storage::generation::GenerationManager;
 use common::*;
 use serde_json::json;
@@ -219,6 +221,26 @@ fn stop_removes_or_invalidates_stale_pid_state() -> Result<()> {
 }
 
 #[test]
+fn clean_stops_running_daemon_before_removing_runtime_state() -> Result<()> {
+    let worktree = create_worktree()?;
+    write_file(worktree.path(), "src/lib.rs", "fn clean_state() {}")?;
+    run_collie(worktree.path(), &["watch", "."])?;
+    wait_for_running(worktree.path())?;
+
+    let clean = run_collie(worktree.path(), &["clean", "."])?;
+    assert!(clean.status.success(), "stderr: {}", stderr(&clean));
+    assert!(
+        !collie_dir(worktree.path()).exists(),
+        "runtime state should be removed after clean"
+    );
+
+    let status = run_collie(worktree.path(), &["status", "."])?;
+    assert!(status.status.success(), "stderr: {}", stderr(&status));
+    assert!(stdout(&status).contains("Collie daemon status: stopped"));
+    Ok(())
+}
+
+#[test]
 fn foreground_watch_uses_same_state_layout() -> Result<()> {
     let worktree = create_worktree()?;
     write_file(worktree.path(), "src/lib.rs", "fn foreground() {}")?;
@@ -278,21 +300,52 @@ fn status_detects_crashed_daemon() -> Result<()> {
 }
 
 #[test]
-fn search_warns_when_daemon_is_not_running() -> Result<()> {
+fn search_uses_clean_index_without_warning_when_daemon_is_not_running() -> Result<()> {
     let worktree = create_worktree()?;
     build_index(worktree.path(), &[("src/lib.rs", "fn stale_result() {}")])?;
 
     let output = run_collie(worktree.path(), &["-s", "stale_result"])?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     assert!(
-        stderr(&output).contains("daemon is not running"),
-        "search should warn about missing daemon on stderr, got stderr: '{}'",
+        stderr(&output).is_empty(),
+        "search should not warn for a clean persisted index, got stderr: '{}'",
         stderr(&output)
     );
     assert!(
         stdout(&output).contains("stale_result"),
         "search results should still be returned, got: {}",
         stdout(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn search_migrates_legacy_repo_local_runtime_state() -> Result<()> {
+    let worktree = create_worktree()?;
+    let legacy_dir = worktree.path().join(".collie");
+    fs::create_dir_all(&legacy_dir)?;
+    fs::write(legacy_dir.join("config.toml"), "# keep me\n")?;
+
+    let source = write_file(worktree.path(), "src/lib.rs", "fn migrated_result() {}")?;
+    let mgr = GenerationManager::new(&legacy_dir);
+    let gen_dir = mgr.create_generation()?;
+    let mut builder = IndexBuilder::new(&gen_dir, &CollieConfig::default())?;
+    builder.index_file(&source)?;
+    builder.save()?;
+    mgr.activate(&gen_dir)?;
+
+    let output = run_collie(worktree.path(), &["-s", "migrated_result"])?;
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stdout(&output).contains("migrated_result"));
+
+    let external_dir = collie_dir(worktree.path());
+    assert!(external_dir.join("CURRENT").exists());
+    assert!(external_dir.join("generations").exists());
+    assert!(!legacy_dir.join("CURRENT").exists());
+    assert!(!legacy_dir.join("generations").exists());
+    assert_eq!(
+        fs::read_to_string(legacy_dir.join("config.toml"))?,
+        "# keep me\n"
     );
     Ok(())
 }
@@ -633,6 +686,46 @@ fn rebuild_replaces_stale_data() -> Result<()> {
     let new_search = run_collie(worktree.path(), &["-s", "fresh_function"])?;
     assert!(stdout(&new_search).contains("Found 1 results"));
 
+    Ok(())
+}
+
+#[test]
+fn rebuild_cleans_stale_daemon_metadata() -> Result<()> {
+    let worktree = create_worktree()?;
+    write_file(worktree.path(), "src/lib.rs", "fn rebuilt_cleanly() {}")?;
+    fs::create_dir_all(collie_dir(worktree.path()))?;
+    fs::write(pid_path(worktree.path()), "999999")?;
+    fs::write(
+        state_path(worktree.path()),
+        serde_json::to_string_pretty(&json!({
+            "worktree_root": canonical_root(worktree.path()),
+            "index_path": index_path(worktree.path()),
+            "pid": 999999,
+            "status": "Running",
+            "started_at_unix_ms": 0,
+            "last_event_at_unix_ms": null,
+            "last_save_at_unix_ms": null,
+            "total_files": 0,
+            "total_terms": 0,
+            "total_postings": 0,
+            "trigram_entries": 0,
+            "last_error": null,
+        }))?,
+    )?;
+
+    let rebuild = run_collie(worktree.path(), &["rebuild", "."])?;
+    assert!(rebuild.status.success(), "stderr: {}", stderr(&rebuild));
+
+    let status = run_collie(worktree.path(), &["status", "."])?;
+    assert!(status.status.success(), "stderr: {}", stderr(&status));
+    let text = stdout(&status);
+    assert!(text.contains("Collie daemon status: stopped"));
+    assert!(text.contains("PID: missing"), "status should not retain stale pid: {}", text);
+    assert!(
+        !text.contains("daemon crashed"),
+        "status should not report a crash after rebuilding from stale metadata: {}",
+        text
+    );
     Ok(())
 }
 

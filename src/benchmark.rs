@@ -313,6 +313,7 @@ pub fn build_benchmark_setup(base_dir: &Path) -> Result<BenchmarkSetup> {
 
     let config = CollieConfig::default();
     let mut builder = IndexBuilder::new(&index_path, &config)?;
+    builder.set_worktree_root(corpus_path.clone());
     for entry in ignore::WalkBuilder::new(&corpus_path).build() {
         let entry = entry?;
         if entry.path().is_file() {
