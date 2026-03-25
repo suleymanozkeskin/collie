@@ -2,8 +2,13 @@ use std::path::Path;
 
 use regex::Regex;
 use regex_syntax::hir::literal::{ExtractKind, Extractor, Seq};
+use regex_syntax::hir::{Hir, HirKind};
 
 use crate::indexer::tokenizer::{tokenize_query, tokenize_query_with_positions};
+
+const MAX_CANDIDATE_BRANCHES: usize = 32;
+const MAX_TOKENS_PER_BRANCH: usize = 8;
+const MAX_EXACT_CANDIDATES: usize = 12;
 
 /// How to query the index for candidate files.
 #[derive(Debug)]
@@ -44,10 +49,7 @@ pub fn extract_candidate_query(pattern: &str) -> CandidateQuery {
         Err(_) => return CandidateQuery::All,
     };
 
-    let prefix_seq = Extractor::new().kind(ExtractKind::Prefix).extract(&hir);
-    let suffix_seq = Extractor::new().kind(ExtractKind::Suffix).extract(&hir);
-
-    merge_candidates(seq_to_candidate(&prefix_seq), seq_to_candidate(&suffix_seq))
+    branches_to_candidate(simplify_branches(plan_required_branches(&hir)))
 }
 
 /// Extract exact literal candidates while preserving token order and positions.
@@ -62,6 +64,8 @@ pub fn extract_exact_candidates(pattern: &str) -> Vec<ExactCandidate> {
 
     let mut candidates = seq_to_exact_candidates(&prefix_seq);
     candidates.extend(seq_to_exact_candidates(&suffix_seq));
+    collect_exact_candidates(&hir, &mut candidates);
+    candidates.retain(|candidate| candidate.terms.len() > 1);
     candidates.sort_by(|a, b| {
         b.terms
             .len()
@@ -70,52 +74,127 @@ pub fn extract_exact_candidates(pattern: &str) -> Vec<ExactCandidate> {
             .then(a.terms.cmp(&b.terms))
     });
     candidates.dedup();
+    candidates.truncate(MAX_EXACT_CANDIDATES);
     candidates
 }
 
-fn seq_to_candidate(seq: &Seq) -> CandidateQuery {
-    let lits = match seq.literals() {
-        Some(l) if !l.is_empty() => l,
-        _ => return CandidateQuery::All,
-    };
-
-    if lits.len() == 1 {
-        let tokens = tokenize_query(&String::from_utf8_lossy(lits[0].as_bytes()));
-        return if tokens.is_empty() {
-            CandidateQuery::All
-        } else {
-            CandidateQuery::And(tokens)
-        };
-    }
-
-    let branches: Vec<Vec<String>> = lits
-        .iter()
-        .map(|lit| tokenize_query(&String::from_utf8_lossy(lit.as_bytes())))
-        .filter(|t| !t.is_empty())
-        .collect();
-
+fn branches_to_candidate(branches: Vec<Vec<String>>) -> CandidateQuery {
     match branches.len() {
         0 => CandidateQuery::All,
-        1 => CandidateQuery::And(branches.into_iter().next().unwrap()),
+        1 => {
+            let tokens = &branches[0];
+            if tokens.is_empty() {
+                CandidateQuery::All
+            } else {
+                CandidateQuery::And(tokens.clone())
+            }
+        }
         _ => CandidateQuery::Or(branches),
     }
 }
 
-fn merge_candidates(a: CandidateQuery, b: CandidateQuery) -> CandidateQuery {
-    match (a, b) {
-        (CandidateQuery::All, other) | (other, CandidateQuery::All) => other,
-        (CandidateQuery::And(mut a_t), CandidateQuery::And(b_t)) => {
-            for t in b_t {
-                if !a_t.contains(&t) {
-                    a_t.push(t);
+fn plan_required_branches(hir: &Hir) -> Vec<Vec<String>> {
+    match hir.kind() {
+        HirKind::Empty | HirKind::Class(_) | HirKind::Look(_) => vec![Vec::new()],
+        HirKind::Literal(regex_syntax::hir::Literal(bytes)) => {
+            let tokens = tokenize_query(&String::from_utf8_lossy(bytes));
+            vec![tokens]
+        }
+        HirKind::Capture(capture) => plan_required_branches(&capture.sub),
+        HirKind::Repetition(rep) => {
+            if rep.min == 0 {
+                vec![Vec::new()]
+            } else {
+                plan_required_branches(&rep.sub)
+            }
+        }
+        HirKind::Concat(parts) => {
+            let mut branches = vec![Vec::new()];
+            for part in parts {
+                branches = combine_branches(branches, plan_required_branches(part));
+                branches = simplify_branches(branches);
+            }
+            branches
+        }
+        HirKind::Alternation(parts) => {
+            let mut branches = Vec::new();
+            for part in parts {
+                branches.extend(plan_required_branches(part));
+            }
+            simplify_branches(branches)
+        }
+    }
+}
+
+fn combine_branches(left: Vec<Vec<String>>, right: Vec<Vec<String>>) -> Vec<Vec<String>> {
+    let mut combined = Vec::new();
+    for left_branch in &left {
+        for right_branch in &right {
+            let mut merged = left_branch.clone();
+            for token in right_branch {
+                if !merged.contains(token) {
+                    merged.push(token.clone());
                 }
             }
-            CandidateQuery::And(a_t)
+            combined.push(merged);
         }
-        (CandidateQuery::And(t), CandidateQuery::Or(_))
-        | (CandidateQuery::Or(_), CandidateQuery::And(t)) => CandidateQuery::And(t),
-        (CandidateQuery::Or(a_b), CandidateQuery::Or(_)) => CandidateQuery::Or(a_b),
     }
+    combined
+}
+
+fn simplify_branches(mut branches: Vec<Vec<String>>) -> Vec<Vec<String>> {
+    if branches.is_empty() {
+        return vec![Vec::new()];
+    }
+
+    for branch in &mut branches {
+        dedup_tokens(branch);
+        trim_branch(branch);
+    }
+
+    if branches.iter().any(Vec::is_empty) {
+        return vec![Vec::new()];
+    }
+
+    branches.sort_by(|a, b| branch_score(b).cmp(&branch_score(a)).then(a.cmp(b)));
+    branches.dedup();
+
+    if branches.len() > MAX_CANDIDATE_BRANCHES {
+        let common = common_tokens(&branches);
+        return vec![common];
+    }
+    branches
+}
+
+fn dedup_tokens(tokens: &mut Vec<String>) {
+    let mut deduped = Vec::with_capacity(tokens.len());
+    for token in tokens.drain(..) {
+        if !deduped.contains(&token) {
+            deduped.push(token);
+        }
+    }
+    *tokens = deduped;
+}
+
+fn trim_branch(tokens: &mut Vec<String>) {
+    if tokens.len() <= MAX_TOKENS_PER_BRANCH {
+        return;
+    }
+
+    tokens.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| b.cmp(a)));
+    tokens.truncate(MAX_TOKENS_PER_BRANCH);
+    tokens.sort();
+}
+
+fn common_tokens(branches: &[Vec<String>]) -> Vec<String> {
+    let mut common = branches[0].clone();
+    common.retain(|token| branches[1..].iter().all(|branch| branch.contains(token)));
+    trim_branch(&mut common);
+    common
+}
+
+fn branch_score(tokens: &[String]) -> (usize, usize) {
+    (tokens.iter().map(String::len).sum(), tokens.len())
 }
 
 fn seq_to_exact_candidates(seq: &Seq) -> Vec<ExactCandidate> {
@@ -138,6 +217,33 @@ fn seq_to_exact_candidates(seq: &Seq) -> Vec<ExactCandidate> {
             }
         })
         .collect()
+}
+
+fn collect_exact_candidates(hir: &Hir, out: &mut Vec<ExactCandidate>) {
+    match hir.kind() {
+        HirKind::Literal(regex_syntax::hir::Literal(bytes)) => {
+            let text = String::from_utf8_lossy(bytes);
+            let terms = tokenize_query_with_positions(&text);
+            if !terms.is_empty() {
+                out.push(ExactCandidate {
+                    total_bytes: bytes.len(),
+                    terms,
+                });
+            }
+        }
+        HirKind::Capture(capture) => collect_exact_candidates(&capture.sub, out),
+        HirKind::Repetition(rep) => {
+            if rep.min > 0 {
+                collect_exact_candidates(&rep.sub, out);
+            }
+        }
+        HirKind::Concat(parts) | HirKind::Alternation(parts) => {
+            for part in parts {
+                collect_exact_candidates(part, out);
+            }
+        }
+        HirKind::Empty | HirKind::Class(_) | HirKind::Look(_) => {}
+    }
 }
 
 /// Apply a compiled regex to a file, returning matching line numbers and content.

@@ -72,8 +72,39 @@ fn anchored_pattern_extracts_literals() {
 }
 
 #[test]
+fn interior_literals_are_preserved_in_candidate_query() {
+    match extract_candidate_query(r"func\s+\(.*\*.*Server\)\s+\w+Handler") {
+        CandidateQuery::And(tokens) => {
+            assert!(tokens.contains(&"func".to_string()));
+            assert!(tokens.contains(&"server".to_string()));
+            assert!(tokens.contains(&"handler".to_string()));
+        }
+        other => panic!("expected And with interior literals, got {:?}", other),
+    }
+}
+
+#[test]
+fn alternation_keeps_branch_specific_literals() {
+    match extract_candidate_query(r"(?:foo|bar)\s+baz") {
+        CandidateQuery::Or(branches) => {
+            assert!(branches.contains(&vec!["foo".to_string(), "baz".to_string()]));
+            assert!(branches.contains(&vec!["bar".to_string(), "baz".to_string()]));
+        }
+        other => panic!("expected Or branches, got {:?}", other),
+    }
+}
+
+#[test]
 fn exact_candidates_preserve_phrase_positions() {
     let candidates = extract_exact_candidates(r"context\.Context");
+    assert!(candidates.iter().any(|candidate| {
+        candidate.terms == vec![(0, "context".to_string()), (1, "context".to_string())]
+    }));
+}
+
+#[test]
+fn exact_candidates_include_interior_literals() {
+    let candidates = extract_exact_candidates(r"foo\s+context\.Context\s+bar");
     assert!(candidates.iter().any(|candidate| {
         candidate.terms == vec![(0, "context".to_string()), (1, "context".to_string())]
     }));

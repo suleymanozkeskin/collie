@@ -359,10 +359,13 @@ impl IndexBuilder {
 
         loop {
             let mut new_candidates = 0usize;
+            let mut saturated = false;
 
             for exact_candidate in &exact_candidates {
+                let candidates = self.search_exact_candidate_ranked(exact_candidate, budget);
+                saturated |= candidates.len() == budget;
                 new_candidates += self.process_regex_candidates(
-                    self.search_exact_candidate_ranked(exact_candidate, budget),
+                    candidates,
                     &regex,
                     multiline,
                     limit,
@@ -374,7 +377,10 @@ impl IndexBuilder {
                 }
             }
 
-            for candidates in self.regex_candidate_passes_ranked(&candidate_query, budget) {
+            for (candidates, pass_saturated) in
+                self.regex_candidate_passes_ranked(&candidate_query, budget)
+            {
+                saturated |= pass_saturated;
                 new_candidates += self.process_regex_candidates(
                     candidates,
                     &regex,
@@ -389,6 +395,9 @@ impl IndexBuilder {
             }
 
             if new_candidates == 0 {
+                break;
+            }
+            if !saturated {
                 break;
             }
 
@@ -425,18 +434,30 @@ impl IndexBuilder {
         &self,
         candidate_query: &CandidateQuery,
         limit: usize,
-    ) -> Vec<Vec<SearchResult>> {
+    ) -> Vec<(Vec<SearchResult>, bool)> {
         match candidate_query {
-            CandidateQuery::All => vec![self.tantivy.list_all_files_ranked(limit)],
+            CandidateQuery::All => {
+                let results = self.tantivy.list_all_files_ranked(limit);
+                let saturated = results.len() == limit;
+                vec![(results, saturated)]
+            }
             CandidateQuery::And(tokens) => vec![
-                self.tantivy.search_multi_term_ranked(tokens, limit),
-                self.tantivy.search_multi_substring_ranked(tokens, limit),
+                {
+                    let results = self.tantivy.search_multi_term_ranked(tokens, limit);
+                    let saturated = results.len() == limit;
+                    (results, saturated)
+                },
+                {
+                    let results = self.tantivy.search_multi_substring_ranked(tokens, limit);
+                    let saturated = results.len() == limit;
+                    (results, saturated)
+                },
             ],
             CandidateQuery::Or(branches) => {
-                let exact = self.merge_candidate_branches(branches, |branch| {
+                let exact = self.merge_candidate_branches_ranked(branches, limit, |branch| {
                     self.tantivy.search_multi_term_ranked(branch, limit)
                 });
-                let substring = self.merge_candidate_branches(branches, |branch| {
+                let substring = self.merge_candidate_branches_ranked(branches, limit, |branch| {
                     self.tantivy.search_multi_substring_ranked(branch, limit)
                 });
                 vec![exact, substring]
@@ -482,6 +503,30 @@ impl IndexBuilder {
             }
         }
         all
+    }
+
+    fn merge_candidate_branches_ranked<F>(
+        &self,
+        branches: &[Vec<String>],
+        limit: usize,
+        mut search: F,
+    ) -> (Vec<SearchResult>, bool)
+    where
+        F: FnMut(&[String]) -> Vec<SearchResult>,
+    {
+        let mut seen = HashSet::new();
+        let mut all = Vec::new();
+        let mut saturated = false;
+        for branch in branches {
+            let results = search(branch);
+            saturated |= results.len() == limit;
+            for result in results {
+                if seen.insert(result.file_path.clone()) {
+                    all.push(result);
+                }
+            }
+        }
+        (all, saturated)
     }
 
     fn process_regex_candidates(
