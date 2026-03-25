@@ -197,11 +197,11 @@
             }
 
             .reveal .modes-term-body {
-                padding: 0.3em 1em 0.5em;
+                padding: 0.2em 1em 0.3em;
             }
 
             .reveal .modes-section {
-                margin: 0.2em 0;
+                margin: 0.1em 0;
             }
 
             .reveal .modes-label {
@@ -210,13 +210,13 @@
                 font-weight: 700;
                 text-transform: uppercase;
                 letter-spacing: 0.1em;
-                margin-bottom: 0.1em;
+                margin-bottom: 0.05em;
             }
 
             .reveal .modes-desc {
                 font-size: 0.4em;
                 color: #ccc;
-                margin-bottom: 0.15em;
+                margin-bottom: 0.1em;
             }
 
             .reveal .modes-desc code {
@@ -230,7 +230,7 @@
             .reveal .modes-pre {
                 font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
                 font-size: 0.38em;
-                line-height: 1.5;
+                line-height: 1.4;
                 margin: 0;
                 padding: 0;
                 background: none;
@@ -247,7 +247,7 @@
 
             .reveal .modes-divider {
                 border-top: 1px solid #222;
-                margin: 0.5em 0;
+                margin: 0.25em 0;
             }
 
             .reveal .bar-chart {
@@ -651,11 +651,15 @@
 
             /* ========== RESPONSIVE: phones / narrow viewports ========== */
             @media (max-width: 600px) {
+                .reveal .slides section {
+                    padding: 20px 24px !important;
+                }
                 .reveal h1 {
                     font-size: 1.6em;
                 }
                 .reveal h2 {
                     font-size: 1.2em;
+                    margin-bottom: 0.4em;
                 }
                 .reveal h3 {
                     font-size: 1em;
@@ -687,10 +691,19 @@
                     font-size: 0.45em;
                 }
 
+                /* Inline paragraph overrides */
+                .reveal section p {
+                    font-size: 0.7em !important;
+                }
+
                 /* Stack all grids to single column */
                 .reveal .vs-grid {
                     grid-template-columns: 1fr;
                     gap: 1em;
+                }
+                .reveal .agentic-compare {
+                    grid-template-columns: 1fr;
+                    gap: 0.8em;
                 }
                 .reveal .problem-row {
                     grid-template-columns: 1fr auto;
@@ -715,21 +728,21 @@
                     gap: 0.5em;
                 }
                 .reveal .modes-term-body {
-                    padding: 0.5em 0.8em 0.8em;
+                    padding: 0.3em 0.6em 0.5em;
                 }
                 .reveal .modes-pre {
-                    font-size: 0.36em;
+                    font-size: 0.42em;
                     overflow-x: auto;
                 }
                 .reveal .modes-desc {
                     font-size: 0.42em;
                 }
                 .reveal .modes-label {
-                    font-size: 0.55em;
+                    font-size: 0.5em;
                 }
                 .reveal .stat-row {
-                    grid-template-columns: 1fr;
-                    gap: 0.8em;
+                    grid-template-columns: 1fr 1fr 1fr;
+                    gap: 0.5em;
                 }
                 .reveal .feature-grid {
                     grid-template-columns: 1fr;
@@ -753,12 +766,12 @@
                     padding: 0.3em 0.5em;
                 }
 
-                /* Bar chart */
+                /* Bar chart: stack label above bar */
                 .reveal .bar-chart {
                     max-width: 100%;
                 }
                 .reveal .bar-row {
-                    grid-template-columns: 70px 1fr 60px;
+                    grid-template-columns: 60px 1fr 50px;
                     font-size: 0.6em;
                 }
                 .reveal .bar-track {
@@ -793,6 +806,9 @@
 
             /* ========== RESPONSIVE: very small phones ========== */
             @media (max-width: 400px) {
+                .reveal .slides section {
+                    padding: 16px 16px !important;
+                }
                 .reveal .hero-title {
                     font-size: 1.8em;
                 }
@@ -821,6 +837,9 @@
                 }
                 .reveal pre {
                     font-size: 0.35em;
+                }
+                .reveal .modes-pre {
+                    font-size: 0.38em;
                 }
             }
         </style>
@@ -867,7 +886,9 @@
                                     "kubelet"</code
                                 >
                             </div>
-                            <div class="problem-time problem-slow">357&ndash;877 ms</div>
+                            <div class="problem-time problem-slow">
+                                357&ndash;877 ms
+                            </div>
                             <div class="problem-note">
                                 Full scan, varies with cache
                             </div>
@@ -879,7 +900,9 @@
                                     "context"</code
                                 >
                             </div>
-                            <div class="problem-time problem-slow">372&ndash;561 ms</div>
+                            <div class="problem-time problem-slow">
+                                372&ndash;561 ms
+                            </div>
                             <div class="problem-note">
                                 Same cost, different query
                             </div>
@@ -892,7 +915,9 @@
                                 >
                             </div>
                             <div class="problem-time problem-fast">13 ms</div>
-                            <div class="problem-note">Index lookup, every time</div>
+                            <div class="problem-note">
+                                Index lookup, every time
+                            </div>
                         </div>
                     </div>
                     <p
@@ -902,7 +927,8 @@
                             margin-top: 0.8em;
                         "
                     >
-                        rg varies 2&ndash;3x across runs. Collie stays under 15 ms.<br/>
+                        rg varies 2&ndash;3x across runs. Collie stays under 15
+                        ms.<br />
                         grep/rg also have no understanding of code structure.
                         Just raw text.
                     </p>
@@ -912,7 +938,8 @@
                 <section>
                     <h2>What is <span class="accent">Collie</span>?</h2>
                     <p style="font-size: 0.85em">
-                        A <strong>lexical and structural search CLI</strong> that
+                        A
+                        <strong>lexical and structural search CLI</strong> that
                         indexes your codebase once, keeps it current<br />while
                         the daemon runs, and auto-stops when you're done.
                     </p>
@@ -975,9 +1002,9 @@
                     </p>
                 </section>
 
-                <!-- ==================== THREE SEARCH MODES ==================== -->
+                <!-- ==================== FOUR SEARCH MODES ==================== -->
                 <section>
-                    <h2>Three search modes</h2>
+                    <h2>Four search modes</h2>
                     <div class="modes-terminal">
                         <div class="modes-term-bar">
                             <span
@@ -1034,9 +1061,12 @@
                             </div>
                             <div class="modes-divider"></div>
                             <div class="modes-section">
-                                <div class="modes-label green">Symbol + Regex</div>
+                                <div class="modes-label green">
+                                    Symbol + Regex
+                                </div>
                                 <div class="modes-desc">
-                                    Structural narrowing + regex refinement via <code>--symbol-regex</code>
+                                    Structural narrowing + regex refinement via
+                                    <code>--symbol-regex</code>
                                 </div>
                                 <pre
                                     class="modes-pre"
@@ -1051,14 +1081,25 @@
                     <h2>Structural query vocabulary</h2>
                     <div class="modes-terminal">
                         <div class="modes-term-bar">
-                            <span class="modes-term-dot" style="background:#ff5f56"></span>
-                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
-                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ff5f56"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ffbd2e"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #27c93f"
+                            ></span>
                         </div>
                         <div class="modes-term-body">
                             <div class="modes-section">
                                 <div class="modes-label blue">Filters</div>
-                                <pre class="modes-pre"><span class="blue">kind:</span>fn|method|class|struct|enum|interface|trait
+                                <pre
+                                    class="modes-pre"
+                                ><span class="blue">kind:</span>fn|method|class|struct|enum|interface|trait
      variable|field|property|constant|module|type|import
 <span class="blue">lang:</span>go|rust|python|typescript|c|cpp|java|csharp|ruby|zig
 <span class="blue">path:</span>src/api/              <span class="dim"># scope to directory</span>
@@ -1067,15 +1108,24 @@
                             <div class="modes-divider"></div>
                             <div class="modes-section">
                                 <div class="modes-label accent">Examples</div>
-                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn lang:go path:pkg/api/ init"</span>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn lang:go path:pkg/api/ init"</span>
 <span class="modes-prompt">$</span> collie search <span class="blue">"kind:struct Config"</span>
 <span class="modes-prompt">$</span> collie search <span class="blue">"kind:method qname:HollowKubelet::Run"</span>
 <span class="modes-prompt">$</span> collie search <span class="blue">"kind:trait path:src/ %Error%"</span></pre>
                             </div>
                         </div>
                     </div>
-                    <p style="font-size: 0.55em; color: #ccc; margin-top: 0.5em;">
-                        14 symbol kinds. 10 languages. Powered by Tree-sitter AST parsing.
+                    <p
+                        style="
+                            font-size: 0.55em;
+                            color: #ccc;
+                            margin-top: 0.5em;
+                        "
+                    >
+                        14 symbol kinds. 10 languages. Powered by Tree-sitter
+                        AST parsing.
                     </p>
                 </section>
 
@@ -1084,27 +1134,45 @@
                     <h2>Search beyond source code</h2>
                     <div class="modes-terminal">
                         <div class="modes-term-bar">
-                            <span class="modes-term-dot" style="background:#ff5f56"></span>
-                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
-                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ff5f56"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ffbd2e"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #27c93f"
+                            ></span>
                         </div>
                         <div class="modes-term-body">
                             <div class="modes-section">
-                                <div class="modes-label dim">Enable in .collie/config.toml</div>
-                                <pre class="modes-pre"><span class="accent">include_pdfs</span> = true</pre>
+                                <div class="modes-label dim">
+                                    Enable in .collie/config.toml
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="accent">include_pdfs</span> = true</pre>
                             </div>
                             <div class="modes-divider"></div>
                             <div class="modes-section">
-                                <div class="modes-label accent">Search code and docs in one query</div>
-                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="accent">"authentication flow"</span>
+                                <div class="modes-label accent">
+                                    Search code and docs in one query
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search <span class="accent">"authentication flow"</span>
 <span class="dim">  src/auth/handler.go:14        func authFlow() {</span>
 <span class="dim">  docs/design-spec.pdf:3        Section 4.2: Authentication Flow</span>
 <span class="dim">  rfcs/auth-v2.pdf:1            RFC: Revised authentication flow</span></pre>
                             </div>
                         </div>
                     </div>
-                    <p style="font-size: 0.6em; color: #ccc; margin-top: 0.5em;">
-                        Design specs, RFCs, API docs, research papers — indexed alongside code.<br />grep and ripgrep can't do this.
+                    <p style="font-size: 0.6em; color: #ccc; margin-top: 0.5em">
+                        Design specs, RFCs, API docs, research papers — indexed
+                        alongside code.<br />grep and ripgrep can't do this.
                     </p>
                 </section>
 
@@ -1174,15 +1242,10 @@
                             </tr>
                         </tbody>
                     </table>
-                    <p
-                        style="
-                            font-size: 0.5em;
-                            color: #bbb;
-                            margin-top: 0.4em;
-                        "
-                    >
+                    <p style="font-size: 0.5em; color: #bbb; margin-top: 0.4em">
                         ripgrep ranges measured across 23 benchmark sessions.
-                        Collie stays consistent; rg varies 2&ndash;3x with cache state.
+                        Collie stays consistent; rg varies 2&ndash;3x with cache
+                        state.
                     </p>
                 </section>
 
@@ -1301,13 +1364,17 @@
                     </p>
                     <h2>
                         Regex search
-                        <span class="dim">(bounded top-k, index-accelerated)</span>
+                        <span class="dim"
+                            >(bounded top-k, index-accelerated)</span
+                        >
                     </h2>
                     <table>
                         <thead>
                             <tr>
                                 <th>Pattern</th>
-                                <th>Collie p50 <span class="dim">(-n 50)</span></th>
+                                <th>
+                                    Collie p50 <span class="dim">(-n 50)</span>
+                                </th>
                                 <th>ripgrep p50</th>
                                 <th>Speedup</th>
                             </tr>
@@ -1338,49 +1405,82 @@
                         narrows candidate files via the index, then applies the
                         full regex.
                     </p>
-                    <p style="font-size: 0.52em; color: #aaa; margin-top: 0.45em;">
-                        Honest framing: Collie regex is optimized for interactive bounded queries.<br />
-                        For exhaustive <code>-n 0</code> scans, ripgrep still wins today.
+                    <p
+                        style="
+                            font-size: 0.52em;
+                            color: #aaa;
+                            margin-top: 0.45em;
+                        "
+                    >
+                        Honest framing: Collie regex is optimized for
+                        interactive bounded queries.<br />
+                        For exhaustive <code>-n 0</code> scans, ripgrep still
+                        wins today.
                     </p>
                 </section>
 
                 <!-- ==================== AGENTIC BENCHMARK ==================== -->
                 <section>
-                    <p class="section-label">
-                        Why this matters for agents
-                    </p>
+                    <p class="section-label">Why this matters for agents</p>
                     <h2>Agents know what they're looking for</h2>
                     <div class="modes-terminal">
                         <div class="modes-term-bar">
-                            <span class="modes-term-dot" style="background:#ff5f56"></span>
-                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
-                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ff5f56"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ffbd2e"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #27c93f"
+                            ></span>
                         </div>
                         <div class="modes-term-body">
                             <div class="modes-section">
-                                <div class="modes-label dim">ripgrep: guess the source syntax</div>
-                                <pre class="modes-pre"><span class="modes-prompt">$</span> rg "func \(.*Authorization.*\) Validate"          <span class="dim">333&ndash;622 ms</span></pre>
+                                <div class="modes-label dim">
+                                    ripgrep: guess the source syntax
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> rg "func \(.*Authorization.*\) Validate"          <span class="dim">333&ndash;622 ms</span></pre>
                             </div>
                             <div class="modes-divider"></div>
                             <div class="modes-section">
-                                <div class="modes-label accent">collie: say what you mean</div>
-                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:method path:pkg/kubeapiserver/options/ %validate%"</span>  <span class="accent">78 ms</span></pre>
+                                <div class="modes-label accent">
+                                    collie: say what you mean
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search <span class="blue">"kind:method path:pkg/kubeapiserver/options/ %validate%"</span>  <span class="accent">78 ms</span></pre>
                             </div>
                         </div>
                     </div>
-                    <p style="font-size: 0.6em; color: #ccc; margin-top: 0.6em;">
-                        Agents already know the kind, language, and approximate location.<br />Structural queries turn that knowledge into precise results.
+                    <p style="font-size: 0.6em; color: #ccc; margin-top: 0.6em">
+                        Agents already know the kind, language, and approximate
+                        location.<br />Structural queries turn that knowledge
+                        into precise results.
                     </p>
                 </section>
 
                 <!-- ==================== SYMBOL + REGEX ==================== -->
                 <section>
-                    <p class="section-label">
-                        New capability
-                    </p>
-                    <h2>Symbol + Regex: <span class="accent">--symbol-regex</span></h2>
-                    <p style="font-size: 0.65em; color: #ccc; margin-bottom: 0.5em;">
-                        Narrow with structure first, refine with regex. No rg equivalent.
+                    <p class="section-label">New capability</p>
+                    <h2>
+                        Symbol + Regex:
+                        <span class="accent">--symbol-regex</span>
+                    </h2>
+                    <p
+                        style="
+                            font-size: 0.65em;
+                            color: #ccc;
+                            margin-bottom: 0.5em;
+                        "
+                    >
+                        Narrow with structure first, refine with regex. No rg
+                        equivalent.
                     </p>
                     <table style="font-size: 0.6em">
                         <thead>
@@ -1393,13 +1493,19 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td>Methods on <code>*Server</code> ending in <code>Handler</code></td>
+                                <td>
+                                    Methods on <code>*Server</code> ending in
+                                    <code>Handler</code>
+                                </td>
                                 <td class="num speedup">50 ms</td>
                                 <td class="num dim">620 ms</td>
                                 <td class="num speedup">12x</td>
                             </tr>
                             <tr>
-                                <td>Methods on <code>Server</code> containing <code>Handler</code></td>
+                                <td>
+                                    Methods on <code>Server</code> containing
+                                    <code>Handler</code>
+                                </td>
                                 <td class="num speedup">&lt;10 ms</td>
                                 <td class="num dim">340 ms</td>
                                 <td class="num speedup">34x+</td>
@@ -1412,20 +1518,32 @@
                             </tr>
                         </tbody>
                     </table>
-                    <div class="modes-terminal" style="margin-top: 0.6em;">
+                    <div class="modes-terminal" style="margin-top: 0.6em">
                         <div class="modes-term-bar">
-                            <span class="modes-term-dot" style="background:#ff5f56"></span>
-                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
-                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ff5f56"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #ffbd2e"
+                            ></span>
+                            <span
+                                class="modes-term-dot"
+                                style="background: #27c93f"
+                            ></span>
                         </div>
                         <div class="modes-term-body">
-                            <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn %Handler"</span> <span class="accent">--symbol-regex</span> <span class="purple">'\*.*Server'</span>
+                            <pre
+                                class="modes-pre"
+                            ><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn %Handler"</span> <span class="accent">--symbol-regex</span> <span class="purple">'\*.*Server'</span>
 <span class="modes-prompt">$</span> collie search <span class="blue">"kind:method qname:Server::"</span> <span class="accent">--symbol-regex</span> <span class="purple">'Handler'</span>
 <span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn %validate%"</span> <span class="accent">--symbol-regex</span> <span class="purple">'webhook|Webhook'</span></pre>
                         </div>
                     </div>
-                    <p style="font-size: 0.5em; color: #bbb; margin-top: 0.4em;">
-                        The more structural info in the symbol query, the faster the regex refinement.
+                    <p style="font-size: 0.5em; color: #bbb; margin-top: 0.4em">
+                        The more structural info in the symbol query, the faster
+                        the regex refinement.
                     </p>
                 </section>
 
@@ -1761,7 +1879,9 @@
                     <div class="stat-row">
                         <div class="stat-box">
                             <div class="num">27&ndash;67x</div>
-                            <div class="label">faster on bounded lexical queries</div>
+                            <div class="label">
+                                faster on bounded lexical queries
+                            </div>
                         </div>
                         <div class="stat-box">
                             <div class="num">11</div>
