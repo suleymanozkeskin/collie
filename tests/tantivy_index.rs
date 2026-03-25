@@ -94,6 +94,28 @@ fn search_substring_short_query() -> Result<()> {
 }
 
 #[test]
+fn search_phrase_respects_token_order_and_gaps() -> Result<()> {
+    let (_temp, mut index) = setup()?;
+
+    index.index_file_content("/a.rs".as_ref(), "context.Context")?;
+    index.index_file_content("/b.rs".as_ref(), "context other Context")?;
+    index.index_file_content("/c.rs".as_ref(), "foo a bar")?;
+    index.commit()?;
+
+    let adjacent = index.search_phrase(&[(0, "context".to_string()), (1, "context".to_string())]);
+    let gap = index.search_phrase(&[(0, "foo".to_string()), (2, "bar".to_string())]);
+
+    let adjacent_paths = result_paths(&adjacent);
+    assert!(adjacent_paths.contains(&PathBuf::from("/a.rs")));
+    assert!(!adjacent_paths.contains(&PathBuf::from("/b.rs")));
+
+    let gap_paths = result_paths(&gap);
+    assert!(gap_paths.contains(&PathBuf::from("/c.rs")));
+
+    Ok(())
+}
+
+#[test]
 fn remove_file_clears_all_docs() -> Result<()> {
     let (_temp, mut index) = setup()?;
 

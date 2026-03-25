@@ -3,7 +3,7 @@ use std::path::Path;
 use regex::Regex;
 use regex_syntax::hir::literal::{ExtractKind, Extractor, Seq};
 
-use crate::indexer::tokenizer::tokenize_query;
+use crate::indexer::tokenizer::{tokenize_query, tokenize_query_with_positions};
 
 /// How to query the index for candidate files.
 #[derive(Debug)]
@@ -14,6 +14,13 @@ pub enum CandidateQuery {
     And(Vec<String>),
     /// Any branch (all tokens in that branch) must appear (OR of ANDs).
     Or(Vec<Vec<String>>),
+}
+
+/// A stronger exact candidate extracted from regex literals.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExactCandidate {
+    pub terms: Vec<(usize, String)>,
+    pub total_bytes: usize,
 }
 
 /// A single regex match within a file.
@@ -41,6 +48,29 @@ pub fn extract_candidate_query(pattern: &str) -> CandidateQuery {
     let suffix_seq = Extractor::new().kind(ExtractKind::Suffix).extract(&hir);
 
     merge_candidates(seq_to_candidate(&prefix_seq), seq_to_candidate(&suffix_seq))
+}
+
+/// Extract exact literal candidates while preserving token order and positions.
+pub fn extract_exact_candidates(pattern: &str) -> Vec<ExactCandidate> {
+    let hir = match regex_syntax::parse(pattern) {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+
+    let prefix_seq = Extractor::new().kind(ExtractKind::Prefix).extract(&hir);
+    let suffix_seq = Extractor::new().kind(ExtractKind::Suffix).extract(&hir);
+
+    let mut candidates = seq_to_exact_candidates(&prefix_seq);
+    candidates.extend(seq_to_exact_candidates(&suffix_seq));
+    candidates.sort_by(|a, b| {
+        b.terms
+            .len()
+            .cmp(&a.terms.len())
+            .then(b.total_bytes.cmp(&a.total_bytes))
+            .then(a.terms.cmp(&b.terms))
+    });
+    candidates.dedup();
+    candidates
 }
 
 fn seq_to_candidate(seq: &Seq) -> CandidateQuery {
@@ -88,6 +118,28 @@ fn merge_candidates(a: CandidateQuery, b: CandidateQuery) -> CandidateQuery {
     }
 }
 
+fn seq_to_exact_candidates(seq: &Seq) -> Vec<ExactCandidate> {
+    let lits = match seq.literals() {
+        Some(l) if !l.is_empty() => l,
+        _ => return Vec::new(),
+    };
+
+    lits.iter()
+        .filter_map(|lit| {
+            let text = String::from_utf8_lossy(lit.as_bytes());
+            let terms = tokenize_query_with_positions(&text);
+            if terms.is_empty() {
+                None
+            } else {
+                Some(ExactCandidate {
+                    terms,
+                    total_bytes: lit.as_bytes().len(),
+                })
+            }
+        })
+        .collect()
+}
+
 /// Apply a compiled regex to a file, returning matching line numbers and content.
 ///
 /// In line mode (`multiline=false`): iterates lines, tests each independently.
@@ -100,10 +152,9 @@ pub fn apply_regex_to_file(
     regex: &Regex,
     multiline: bool,
 ) -> Option<Vec<RegexFileMatch>> {
-    let content = std::fs::read_to_string(file_path).ok()?;
-    let mut matches = Vec::new();
-
     if multiline {
+        let content = std::fs::read_to_string(file_path).ok()?;
+        let mut matches = Vec::new();
         let line_starts: Vec<usize> = std::iter::once(0)
             .chain(
                 content
@@ -133,18 +184,32 @@ pub fn apply_regex_to_file(
                 }
             }
         }
+        Some(matches)
     } else {
-        for (idx, line) in content.lines().enumerate() {
-            if regex.is_match(line) {
+        let file = std::fs::File::open(file_path).ok()?;
+        let mut reader = std::io::BufReader::new(file);
+        let mut line = String::new();
+        let mut line_number = 0usize;
+        let mut matches = Vec::new();
+
+        loop {
+            line.clear();
+            let bytes = std::io::BufRead::read_line(&mut reader, &mut line).ok()?;
+            if bytes == 0 {
+                break;
+            }
+            line_number += 1;
+
+            let trimmed = line.trim_end_matches(['\n', '\r']);
+            if regex.is_match(trimmed) {
                 matches.push(RegexFileMatch {
-                    line_number: idx + 1,
-                    line_content: line.to_string(),
+                    line_number,
+                    line_content: trimmed.to_string(),
                 });
             }
         }
+        Some(matches)
     }
-
-    Some(matches)
 }
 
 fn byte_to_line(offset: usize, line_starts: &[usize]) -> usize {

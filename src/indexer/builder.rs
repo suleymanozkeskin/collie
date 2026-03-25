@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::CollieConfig;
 use crate::indexer::tokenizer::tokenize_query;
-use crate::regex_search::{self, CandidateQuery, RegexFileMatch};
+use crate::regex_search::{self, CandidateQuery, ExactCandidate, RegexFileMatch};
 use crate::storage::tantivy_index::TantivyIndex;
 use crate::storage::{IndexStats, SearchResult};
 use crate::symbols::adapters::AdapterRegistry;
@@ -29,6 +29,9 @@ struct ParsedPattern {
     tokens: Vec<String>,
     mode: PatternMode,
 }
+
+const REGEX_CANDIDATE_MIN_BUDGET: usize = 100;
+const REGEX_CANDIDATE_OVERSAMPLE: usize = 4;
 
 /// Tokenize a query pattern and determine search mode.
 ///
@@ -321,11 +324,86 @@ impl IndexBuilder {
             .build()
             .with_context(|| format!("invalid regex: {}", pattern))?;
 
+        let exact_candidates = regex_search::extract_exact_candidates(pattern);
         let candidate_query = regex_search::extract_candidate_query(pattern);
         let mut results = Vec::new();
         let mut seen_candidates = HashSet::new();
 
-        let candidate_passes = match &candidate_query {
+        if limit == 0 {
+            for exact_candidate in &exact_candidates {
+                self.process_regex_candidates(
+                    self.search_exact_candidate(exact_candidate),
+                    &regex,
+                    multiline,
+                    0,
+                    &mut seen_candidates,
+                    &mut results,
+                );
+            }
+            for candidates in self.regex_candidate_passes(&candidate_query) {
+                self.process_regex_candidates(
+                    candidates,
+                    &regex,
+                    multiline,
+                    0,
+                    &mut seen_candidates,
+                    &mut results,
+                );
+            }
+            return Ok(results);
+        }
+
+        let mut budget = limit
+            .saturating_mul(REGEX_CANDIDATE_OVERSAMPLE)
+            .max(REGEX_CANDIDATE_MIN_BUDGET);
+
+        loop {
+            let mut new_candidates = 0usize;
+
+            for exact_candidate in &exact_candidates {
+                new_candidates += self.process_regex_candidates(
+                    self.search_exact_candidate_ranked(exact_candidate, budget),
+                    &regex,
+                    multiline,
+                    limit,
+                    &mut seen_candidates,
+                    &mut results,
+                );
+                if results.len() >= limit {
+                    return Ok(results);
+                }
+            }
+
+            for candidates in self.regex_candidate_passes_ranked(&candidate_query, budget) {
+                new_candidates += self.process_regex_candidates(
+                    candidates,
+                    &regex,
+                    multiline,
+                    limit,
+                    &mut seen_candidates,
+                    &mut results,
+                );
+                if results.len() >= limit {
+                    return Ok(results);
+                }
+            }
+
+            if new_candidates == 0 {
+                break;
+            }
+
+            let next_budget = budget.saturating_mul(2);
+            if next_budget == budget {
+                break;
+            }
+            budget = next_budget;
+        }
+
+        Ok(results)
+    }
+
+    fn regex_candidate_passes(&self, candidate_query: &CandidateQuery) -> Vec<Vec<SearchResult>> {
+        match candidate_query {
             CandidateQuery::All => vec![self.tantivy.list_all_files()],
             CandidateQuery::And(tokens) => vec![
                 self.tantivy.search_multi_term(tokens),
@@ -340,29 +418,50 @@ impl IndexBuilder {
                 });
                 vec![exact, substring]
             }
-        };
+        }
+    }
 
-        for candidates in candidate_passes {
-            for candidate in candidates {
-                if !seen_candidates.insert(candidate.file_path.clone()) {
-                    continue;
-                }
-                if limit > 0 && results.len() >= limit {
-                    return Ok(results);
-                }
-                if let Some(file_matches) =
-                    regex_search::apply_regex_to_file(&candidate.file_path, &regex, multiline)
-                {
-                    if !file_matches.is_empty() {
-                        results.push(RegexSearchResult {
-                            file_path: candidate.file_path,
-                            matches: file_matches,
-                        });
-                    }
-                }
+    fn regex_candidate_passes_ranked(
+        &self,
+        candidate_query: &CandidateQuery,
+        limit: usize,
+    ) -> Vec<Vec<SearchResult>> {
+        match candidate_query {
+            CandidateQuery::All => vec![self.tantivy.list_all_files_ranked(limit)],
+            CandidateQuery::And(tokens) => vec![
+                self.tantivy.search_multi_term_ranked(tokens, limit),
+                self.tantivy.search_multi_substring_ranked(tokens, limit),
+            ],
+            CandidateQuery::Or(branches) => {
+                let exact = self.merge_candidate_branches(branches, |branch| {
+                    self.tantivy.search_multi_term_ranked(branch, limit)
+                });
+                let substring = self.merge_candidate_branches(branches, |branch| {
+                    self.tantivy.search_multi_substring_ranked(branch, limit)
+                });
+                vec![exact, substring]
             }
         }
-        Ok(results)
+    }
+
+    fn search_exact_candidate(&self, candidate: &ExactCandidate) -> Vec<SearchResult> {
+        match candidate.terms.as_slice() {
+            [] => Vec::new(),
+            [(_, token)] => self.tantivy.search_exact(token),
+            _ => self.tantivy.search_phrase(&candidate.terms),
+        }
+    }
+
+    fn search_exact_candidate_ranked(
+        &self,
+        candidate: &ExactCandidate,
+        limit: usize,
+    ) -> Vec<SearchResult> {
+        match candidate.terms.as_slice() {
+            [] => Vec::new(),
+            [(_, token)] => self.tantivy.search_exact_ranked(token, limit),
+            _ => self.tantivy.search_phrase_ranked(&candidate.terms, limit),
+        }
     }
 
     fn merge_candidate_branches<F>(
@@ -383,6 +482,42 @@ impl IndexBuilder {
             }
         }
         all
+    }
+
+    fn process_regex_candidates(
+        &self,
+        candidates: Vec<SearchResult>,
+        regex: &regex::Regex,
+        multiline: bool,
+        limit: usize,
+        seen_candidates: &mut HashSet<PathBuf>,
+        results: &mut Vec<RegexSearchResult>,
+    ) -> usize {
+        let mut new_candidates = 0usize;
+
+        for candidate in candidates {
+            if !seen_candidates.insert(candidate.file_path.clone()) {
+                continue;
+            }
+            new_candidates += 1;
+
+            if limit > 0 && results.len() >= limit {
+                break;
+            }
+
+            if let Some(file_matches) =
+                regex_search::apply_regex_to_file(&candidate.file_path, regex, multiline)
+            {
+                if !file_matches.is_empty() {
+                    results.push(RegexSearchResult {
+                        file_path: candidate.file_path,
+                        matches: file_matches,
+                    });
+                }
+            }
+        }
+
+        new_candidates
     }
 
     /// Get index statistics. All values derived from the Tantivy index.

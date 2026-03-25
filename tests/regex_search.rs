@@ -1,4 +1,6 @@
-use collie_search::regex_search::{CandidateQuery, apply_regex_to_file, extract_candidate_query};
+use collie_search::regex_search::{
+    CandidateQuery, apply_regex_to_file, extract_candidate_query, extract_exact_candidates,
+};
 use std::io::Write;
 
 // --- Literal extraction ---
@@ -69,6 +71,22 @@ fn anchored_pattern_extracts_literals() {
     }
 }
 
+#[test]
+fn exact_candidates_preserve_phrase_positions() {
+    let candidates = extract_exact_candidates(r"context\.Context");
+    assert!(candidates.iter().any(|candidate| {
+        candidate.terms == vec![(0, "context".to_string()), (1, "context".to_string())]
+    }));
+}
+
+#[test]
+fn exact_candidates_preserve_position_gaps_after_short_tokens() {
+    let candidates = extract_exact_candidates("foo a bar");
+    assert!(candidates.iter().any(|candidate| {
+        candidate.terms == vec![(0, "foo".to_string()), (2, "bar".to_string())]
+    }));
+}
+
 // --- Regex file application ---
 
 #[test]
@@ -95,6 +113,16 @@ fn apply_regex_multiple_matches() {
     assert_eq!(matches.len(), 2);
     assert_eq!(matches[0].line_number, 1);
     assert_eq!(matches[1].line_number, 3);
+}
+
+#[test]
+fn apply_regex_trims_line_endings_in_streaming_mode() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    write!(tmp.as_file(), "hit\r\nmiss\r\n").unwrap();
+    let re = regex::Regex::new("hit").unwrap();
+    let matches = apply_regex_to_file(tmp.path(), &re, false).unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].line_content, "hit");
 }
 
 #[test]

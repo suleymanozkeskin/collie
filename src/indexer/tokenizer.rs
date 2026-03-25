@@ -78,11 +78,44 @@ impl Default for Tokenizer {
 /// Tokenize a query string using the same rules as `collie_body`.
 /// Returns token texts (lowercased, min length 2).
 pub fn tokenize_query(input: &str) -> Vec<String> {
-    Tokenizer::new()
-        .tokenize(input)
+    tokenize_query_with_positions(input)
         .into_iter()
-        .map(|t| t.text)
+        .map(|(_, text)| text)
         .collect()
+}
+
+/// Tokenize a query string using the same rules as `collie_body`.
+/// Returns `(position, token)` pairs using analyzer token positions.
+pub fn tokenize_query_with_positions(input: &str) -> Vec<(usize, String)> {
+    let mut tokens = Vec::new();
+    let mut position: usize = 0;
+    let mut current_start = 0;
+    let mut in_token = false;
+
+    for (idx, ch) in input.char_indices() {
+        if ch.is_alphanumeric() || ch == '_' {
+            if !in_token {
+                current_start = idx;
+                in_token = true;
+            }
+        } else if in_token {
+            let lowered = input[current_start..idx].to_lowercase();
+            if lowered.len() >= 2 {
+                tokens.push((position, lowered));
+            }
+            position += 1;
+            in_token = false;
+        }
+    }
+
+    if in_token {
+        let lowered = input[current_start..].to_lowercase();
+        if lowered.len() >= 2 {
+            tokens.push((position, lowered));
+        }
+    }
+
+    tokens
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tantivy::collector::{DocSetCollector, TopDocs};
 use tantivy::directory::error::LockError;
 use tantivy::indexer::NoMergePolicy;
-use tantivy::query::{BooleanQuery, Occur, RegexQuery, TermQuery};
+use tantivy::query::{BooleanQuery, Occur, PhraseQuery, RegexQuery, TermQuery};
 use tantivy::schema::{
     FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
@@ -657,6 +657,15 @@ impl TantivyIndex {
         self.execute_file_query(&query)
     }
 
+    /// Return ranked indexed file paths.
+    pub fn list_all_files_ranked(&self, limit: usize) -> Vec<SearchResult> {
+        let query = TermQuery::new(
+            Term::from_field_text(self.schema.doc_type, "file"),
+            IndexRecordOption::Basic,
+        );
+        self.execute_file_query_ranked(&query, limit)
+    }
+
     /// Search for an exact token match, ranked by BM25.
     pub fn search_exact_ranked(&self, token: &str, limit: usize) -> Vec<SearchResult> {
         let normalized = token.to_lowercase();
@@ -711,6 +720,48 @@ impl TantivyIndex {
             })
             .collect();
         self.execute_file_query_ranked(&BooleanQuery::new(subqueries), limit)
+    }
+
+    /// Search for files containing ALL given substrings, ranked by BM25.
+    pub fn search_multi_substring_ranked(
+        &self,
+        tokens: &[String],
+        limit: usize,
+    ) -> Vec<SearchResult> {
+        let subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = tokens
+            .iter()
+            .filter_map(|token| {
+                let normalized = token.to_lowercase();
+                let pattern = format!(".*{}.*", regex::escape(&normalized));
+                RegexQuery::from_pattern(&pattern, self.schema.body)
+                    .ok()
+                    .map(|q| (Occur::Must, Box::new(q) as Box<dyn tantivy::query::Query>))
+            })
+            .collect();
+        if subqueries.is_empty() {
+            return Vec::new();
+        }
+        self.execute_file_query_ranked(&BooleanQuery::new(subqueries), limit)
+    }
+
+    /// Search for files containing an exact ordered token sequence.
+    pub fn search_phrase(&self, terms: &[(usize, String)]) -> Vec<SearchResult> {
+        match self.build_phrase_query(terms) {
+            Some(query) => self.execute_file_query(&query),
+            None => Vec::new(),
+        }
+    }
+
+    /// Search for files containing an exact ordered token sequence, ranked by BM25.
+    pub fn search_phrase_ranked(
+        &self,
+        terms: &[(usize, String)],
+        limit: usize,
+    ) -> Vec<SearchResult> {
+        match self.build_phrase_query(terms) {
+            Some(query) => self.execute_file_query_ranked(&query, limit),
+            None => Vec::new(),
+        }
     }
 
     /// Index statistics derived entirely from the Tantivy index.
@@ -820,6 +871,21 @@ impl TantivyIndex {
         }
 
         results
+    }
+
+    fn build_phrase_query(&self, terms: &[(usize, String)]) -> Option<PhraseQuery> {
+        if terms.is_empty() {
+            return None;
+        }
+        if terms.len() == 1 {
+            return None;
+        }
+
+        let phrase_terms: Vec<(usize, Term)> = terms
+            .iter()
+            .map(|(position, token)| (*position, Term::from_field_text(self.schema.body, token)))
+            .collect();
+        Some(PhraseQuery::new_with_offset(phrase_terms))
     }
 
     fn build_name_query(&self, pattern: &str) -> Result<Box<dyn tantivy::query::Query>> {

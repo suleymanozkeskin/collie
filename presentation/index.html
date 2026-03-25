@@ -836,7 +836,7 @@
                     <div class="subtitle">
                         Incrementally indexed code search.<br />
                         Specialized for your projects.<br />Faster than grep /
-                        ripgrep.
+                        ripgrep for interactive search.
                     </div>
                     <div class="install-cmd">
                         <code>cargo install collie-search</code>
@@ -867,9 +867,9 @@
                                     "kubelet"</code
                                 >
                             </div>
-                            <div class="problem-time problem-slow">690 ms</div>
+                            <div class="problem-time problem-slow">357&ndash;877 ms</div>
                             <div class="problem-note">
-                                Full scan, every time
+                                Full scan, varies with cache
                             </div>
                         </div>
                         <div class="problem-row">
@@ -879,7 +879,7 @@
                                     "context"</code
                                 >
                             </div>
-                            <div class="problem-time problem-slow">612 ms</div>
+                            <div class="problem-time problem-slow">372&ndash;561 ms</div>
                             <div class="problem-note">
                                 Same cost, different query
                             </div>
@@ -891,8 +891,8 @@
                                     search "kubelet"</code
                                 >
                             </div>
-                            <div class="problem-time problem-fast">12 ms</div>
-                            <div class="problem-note">Index lookup</div>
+                            <div class="problem-time problem-fast">13 ms</div>
+                            <div class="problem-note">Index lookup, every time</div>
                         </div>
                     </div>
                     <p
@@ -902,6 +902,7 @@
                             margin-top: 0.8em;
                         "
                     >
+                        rg varies 2&ndash;3x across runs. Collie stays under 15 ms.<br/>
                         grep/rg also have no understanding of code structure.
                         Just raw text.
                     </p>
@@ -921,11 +922,11 @@
                     </p>
                     <div class="stat-row">
                         <div class="stat-box">
-                            <div class="num">~10ms</div>
+                            <div class="num">~13ms</div>
                             <div class="label">Search latency on 29K files</div>
                         </div>
                         <div class="stat-box">
-                            <div class="num">10</div>
+                            <div class="num">11</div>
                             <div class="label">
                                 Languages with symbol extraction
                             </div>
@@ -1110,59 +1111,69 @@
                         <thead>
                             <tr>
                                 <th>Query</th>
-                                <th>Collie</th>
-                                <th>ripgrep</th>
+                                <th>Collie p50</th>
+                                <th>ripgrep range</th>
                                 <th>Speedup</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
                                 <td><code>kubelet</code></td>
-                                <td class="num">12 ms</td>
-                                <td class="num">690 ms</td>
-                                <td class="num speedup">57x</td>
+                                <td class="num">13 ms</td>
+                                <td class="num">357&ndash;877 ms</td>
+                                <td class="num speedup">27&ndash;67x</td>
                             </tr>
                             <tr>
                                 <td><code>context</code></td>
-                                <td class="num">12 ms</td>
-                                <td class="num">612 ms</td>
-                                <td class="num speedup">51x</td>
+                                <td class="num">13 ms</td>
+                                <td class="num">372&ndash;561 ms</td>
+                                <td class="num speedup">29&ndash;43x</td>
                             </tr>
                             <tr>
                                 <td><code>controller</code></td>
                                 <td class="num">9 ms</td>
-                                <td class="num">466 ms</td>
-                                <td class="num speedup">52x</td>
+                                <td class="num">333&ndash;622 ms</td>
+                                <td class="num speedup">37&ndash;69x</td>
                             </tr>
                             <tr>
                                 <td>
                                     <code>kube%</code>
                                     <span class="dim">(prefix)</span>
                                 </td>
-                                <td class="num">14 ms</td>
-                                <td class="num">871 ms</td>
-                                <td class="num speedup">63x</td>
+                                <td class="num">11 ms</td>
+                                <td class="num">424&ndash;737 ms</td>
+                                <td class="num speedup">39&ndash;67x</td>
                             </tr>
                             <tr>
                                 <td>
                                     <code>%config</code>
                                     <span class="dim">(suffix)</span>
                                 </td>
-                                <td class="num">12 ms</td>
-                                <td class="num">480 ms</td>
-                                <td class="num speedup">40x</td>
+                                <td class="num">10 ms</td>
+                                <td class="num">347&ndash;909 ms</td>
+                                <td class="num speedup">35&ndash;91x</td>
                             </tr>
                             <tr>
                                 <td>
                                     <code>%request%</code>
                                     <span class="dim">(substring)</span>
                                 </td>
-                                <td class="num">133 ms</td>
-                                <td class="num">518 ms</td>
-                                <td class="num speedup">4x</td>
+                                <td class="num">119 ms</td>
+                                <td class="num">352&ndash;708 ms</td>
+                                <td class="num speedup">3&ndash;6x</td>
                             </tr>
                         </tbody>
                     </table>
+                    <p
+                        style="
+                            font-size: 0.5em;
+                            color: #bbb;
+                            margin-top: 0.4em;
+                        "
+                    >
+                        ripgrep ranges measured across 23 benchmark sessions.
+                        Collie stays consistent; rg varies 2&ndash;3x with cache state.
+                    </p>
                 </section>
 
                 <!-- ==================== BENCHMARK: VISUAL BAR CHART ==================== -->
@@ -1180,21 +1191,31 @@
                                     style="width: 2%"
                                 ></div>
                             </div>
-                            <div class="bar-value">12 ms</div>
+                            <div class="bar-value">13 ms</div>
                         </div>
                         <div class="bar-row">
-                            <div class="bar-label dim">ripgrep</div>
+                            <div class="bar-label dim">rg best</div>
                             <div class="bar-track">
                                 <div
                                     class="bar-fill rg"
-                                    style="width: 79%"
+                                    style="width: 41%"
                                 ></div>
                             </div>
-                            <div class="bar-value">690 ms</div>
+                            <div class="bar-value">357 ms</div>
+                        </div>
+                        <div class="bar-row">
+                            <div class="bar-label dim">rg worst</div>
+                            <div class="bar-track">
+                                <div
+                                    class="bar-fill grep"
+                                    style="width: 100%"
+                                ></div>
+                            </div>
+                            <div class="bar-value">877 ms</div>
                         </div>
                     </div>
                     <div class="big-number accent">
-                        57x
+                        27&ndash;67x
                         <span style="font-size: 0.4em; color: #bbb"
                             >faster</span
                         >
@@ -1214,13 +1235,15 @@
                         <thead>
                             <tr>
                                 <th>Query</th>
-                                <th>Collie</th>
+                                <th>Collie p50</th>
+                                <th>Range</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
                                 <td><code>kind:fn handler</code></td>
-                                <td class="num">14 ms</td>
+                                <td class="num">11 ms</td>
+                                <td class="num dim">7&ndash;15 ms</td>
                             </tr>
                             <tr>
                                 <td>
@@ -1228,11 +1251,13 @@
                                         >kind:struct SharedInformerFactory</code
                                     >
                                 </td>
-                                <td class="num">11 ms</td>
+                                <td class="num">9 ms</td>
+                                <td class="num dim">8&ndash;18 ms</td>
                             </tr>
                             <tr>
                                 <td><code>kind:fn path:pkg/ init</code></td>
-                                <td class="num">23 ms</td>
+                                <td class="num">15 ms</td>
+                                <td class="num dim">13&ndash;20 ms</td>
                             </tr>
                             <tr>
                                 <td>
@@ -1241,11 +1266,13 @@
                                         qname:HollowKubelet::Run</code
                                     >
                                 </td>
-                                <td class="num">9 ms</td>
+                                <td class="num">8 ms</td>
+                                <td class="num dim">8&ndash;17 ms</td>
                             </tr>
                             <tr>
                                 <td><code>kind:fn validate webhook</code></td>
-                                <td class="num">9 ms</td>
+                                <td class="num">10 ms</td>
+                                <td class="num dim">8&ndash;24 ms</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1264,35 +1291,35 @@
                     </p>
                     <h2>
                         Regex search
-                        <span class="dim">(index-accelerated)</span>
+                        <span class="dim">(bounded top-k, index-accelerated)</span>
                     </h2>
                     <table>
                         <thead>
                             <tr>
                                 <th>Pattern</th>
-                                <th>Collie</th>
-                                <th>ripgrep</th>
+                                <th>Collie p50 <span class="dim">(-n 50)</span></th>
+                                <th>ripgrep p50</th>
                                 <th>Speedup</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
                                 <td><code>func\s+\w+Handler</code></td>
-                                <td class="num">280 ms</td>
-                                <td class="num">460 ms</td>
-                                <td class="num speedup">1.6x</td>
+                                <td class="num">15 ms</td>
+                                <td class="num">366 ms</td>
+                                <td class="num speedup">24x</td>
                             </tr>
                             <tr>
                                 <td><code>interface\s*\{</code></td>
-                                <td class="num">175 ms</td>
-                                <td class="num">466 ms</td>
-                                <td class="num speedup">2.7x</td>
+                                <td class="num">11 ms</td>
+                                <td class="num">398 ms</td>
+                                <td class="num speedup">36x</td>
                             </tr>
                             <tr>
                                 <td><code>context\.Context</code></td>
-                                <td class="num">303 ms</td>
-                                <td class="num">438 ms</td>
-                                <td class="num speedup">1.4x</td>
+                                <td class="num">12 ms</td>
+                                <td class="num">384 ms</td>
+                                <td class="num speedup">31x</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1300,6 +1327,10 @@
                         Collie extracts literal fragments from your regex,<br />
                         narrows candidate files via the index, then applies the
                         full regex.
+                    </p>
+                    <p style="font-size: 0.52em; color: #aaa; margin-top: 0.45em;">
+                        Honest framing: Collie regex is optimized for interactive bounded queries.<br />
+                        For exhaustive <code>-n 0</code> scans, ripgrep still wins today.
                     </p>
                 </section>
 
@@ -1318,12 +1349,12 @@
                         <div class="modes-term-body">
                             <div class="modes-section">
                                 <div class="modes-label dim">ripgrep: guess the source syntax</div>
-                                <pre class="modes-pre"><span class="modes-prompt">$</span> rg "func \(.*Authorization.*\) Validate"          <span class="dim">477 ms</span></pre>
+                                <pre class="modes-pre"><span class="modes-prompt">$</span> rg "func \(.*Authorization.*\) Validate"          <span class="dim">333&ndash;622 ms</span></pre>
                             </div>
                             <div class="modes-divider"></div>
                             <div class="modes-section">
                                 <div class="modes-label accent">collie: say what you mean</div>
-                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:method path:pkg/kubeapiserver/options/ %validate%"</span>  <span class="accent">84 ms</span></pre>
+                                <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:method path:pkg/kubeapiserver/options/ %validate%"</span>  <span class="accent">78 ms</span></pre>
                             </div>
                         </div>
                     </div>
@@ -1418,7 +1449,7 @@
                                 <div class="agent-point-key">Latency</div>
                                 <div class="agent-point-val">
                                     Agents run hundreds of searches per session.
-                                    12ms vs 690ms compounds.
+                                    13ms vs 350&ndash;880ms compounds.
                                 </div>
                             </div>
                         </div>
@@ -1503,7 +1534,7 @@
                                 >
                                 <span class="arch-what"
                                     >Parallel indexing &rarr; 29K files in
-                                    9.7s</span
+                                    7.5s</span
                                 >
                             </div>
                             <div class="arch-arrow">&darr;</div>
@@ -1573,21 +1604,21 @@
                         <tbody>
                             <tr>
                                 <td><strong>Collie repo</strong></td>
-                                <td class="num">71</td>
+                                <td class="num">75</td>
                                 <td class="num accent">
-                                    <strong>0.2s</strong>
+                                    <strong>0.3s</strong>
                                 </td>
-                                <td class="num">588 KB</td>
-                                <td class="num">25 MB</td>
+                                <td class="num">675 KB</td>
+                                <td class="num">26 MB</td>
                             </tr>
                             <tr>
                                 <td><strong>Kubernetes</strong></td>
                                 <td class="num">28,903</td>
                                 <td class="num accent">
-                                    <strong>9.7s</strong>
+                                    <strong>7.5s</strong>
                                 </td>
-                                <td class="num">207 MB</td>
-                                <td class="num">527 MB</td>
+                                <td class="num">214 MB</td>
+                                <td class="num">534 MB</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1662,16 +1693,16 @@
                     </div>
                     <div class="stat-row">
                         <div class="stat-box">
-                            <div class="num">57x</div>
-                            <div class="label">faster than ripgrep</div>
+                            <div class="num">27&ndash;67x</div>
+                            <div class="label">faster on bounded lexical queries</div>
                         </div>
                         <div class="stat-box">
                             <div class="num">11</div>
                             <div class="label">languages</div>
                         </div>
                         <div class="stat-box">
-                            <div class="num">10ms</div>
-                            <div class="label">search latency</div>
+                            <div class="num">13ms</div>
+                            <div class="label">bounded search latency</div>
                         </div>
                     </div>
                     <div class="install-cmd">
