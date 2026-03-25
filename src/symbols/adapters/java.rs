@@ -27,7 +27,13 @@ impl LanguageAdapter for JavaAdapter {
             return Vec::new();
         };
         let mut symbols = Vec::new();
-        walk_java(tree.root_node(), content.as_bytes(), path, &mut symbols, None);
+        walk_java(
+            tree.root_node(),
+            content.as_bytes(),
+            path,
+            &mut symbols,
+            None,
+        );
         symbols
     }
 }
@@ -45,8 +51,14 @@ fn walk_java(
                 let name = text(name_node, source);
                 let vis = java_visibility(node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Class, name,
-                    path, node, source, container, vis, "java",
+                    SymbolKind::Class,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    vis,
+                    "java",
                 ));
                 for_each_child(node, |child| {
                     walk_java(child, source, path, symbols, Some(name));
@@ -59,8 +71,14 @@ fn walk_java(
                 let name = text(name_node, source);
                 let vis = java_visibility(node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Interface, name,
-                    path, node, source, container, vis, "java",
+                    SymbolKind::Interface,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    vis,
+                    "java",
                 ));
                 for_each_child(node, |child| {
                     walk_java(child, source, path, symbols, Some(name));
@@ -73,8 +91,14 @@ fn walk_java(
                 let name = text(name_node, source);
                 let vis = java_visibility(node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Enum, name,
-                    path, node, source, container, vis, "java",
+                    SymbolKind::Enum,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    vis,
+                    "java",
                 ));
                 for_each_child(node, |child| {
                     walk_java(child, source, path, symbols, Some(name));
@@ -91,8 +115,14 @@ fn walk_java(
                 };
                 let vis = java_visibility(node, source);
                 symbols.push(make_symbol(
-                    kind, text(name_node, source),
-                    path, node, source, container, vis, "java",
+                    kind,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    container,
+                    vis,
+                    "java",
                 ));
             }
         }
@@ -101,8 +131,14 @@ fn walk_java(
                 if let Some(name_node) = declarator.child_by_field_name("name") {
                     let vis = java_visibility(node, source);
                     symbols.push(make_symbol(
-                        SymbolKind::Field, text(name_node, source),
-                        path, node, source, container, vis, "java",
+                        SymbolKind::Field,
+                        text(name_node, source),
+                        path,
+                        node,
+                        source,
+                        container,
+                        vis,
+                        "java",
                     ));
                 }
             }
@@ -111,8 +147,14 @@ fn walk_java(
             if let Some(declarator) = node.child_by_field_name("declarator") {
                 if let Some(name_node) = declarator.child_by_field_name("name") {
                     symbols.push(make_symbol(
-                        SymbolKind::Constant, text(name_node, source),
-                        path, node, source, container, Some("pub"), "java",
+                        SymbolKind::Constant,
+                        text(name_node, source),
+                        path,
+                        node,
+                        source,
+                        container,
+                        Some("pub"),
+                        "java",
                     ));
                 }
             }
@@ -129,15 +171,23 @@ fn walk_java(
                 .trim();
             if !name.is_empty() && name != "*" {
                 symbols.push(make_symbol(
-                    SymbolKind::Import, name,
-                    path, node, source, None, None, "java",
+                    SymbolKind::Import,
+                    name,
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "java",
                 ));
             }
         }
         _ => {}
     }
 
-    for_each_child(node, |child| walk_java(child, source, path, symbols, container));
+    for_each_child(node, |child| {
+        walk_java(child, source, path, symbols, container)
+    });
 }
 
 fn java_visibility(node: Node<'_>, source: &[u8]) -> Option<&'static str> {

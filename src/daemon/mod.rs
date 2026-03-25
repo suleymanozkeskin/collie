@@ -410,8 +410,7 @@ pub fn clean(path: PathBuf) -> Result<()> {
 
     // Stop the daemon first if running
     if let Some(pid) = read_pid_if_alive(&paths.pid_path) {
-        stop_running_daemon(&paths, pid)
-            .context("failed to stop running daemon before clean")?;
+        stop_running_daemon(&paths, pid).context("failed to stop running daemon before clean")?;
     }
 
     let size = dir_size(&collie_dir);

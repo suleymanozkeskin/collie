@@ -36,10 +36,20 @@ fn walk_zig(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol
     match node.kind() {
         "function_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
-                let vis = if is_pub(node, source) { Some("pub") } else { Some("private") };
+                let vis = if is_pub(node, source) {
+                    Some("pub")
+                } else {
+                    Some("private")
+                };
                 symbols.push(make_symbol(
-                    SymbolKind::Function, text(name_node, source),
-                    path, node, source, None, vis, "zig",
+                    SymbolKind::Function,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    None,
+                    vis,
+                    "zig",
                 ));
             }
         }
@@ -52,8 +62,14 @@ fn walk_zig(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol
                         let name = text(child, source).trim_matches('"');
                         if !name.is_empty() {
                             symbols.push(make_symbol(
-                                SymbolKind::Function, name,
-                                path, node, source, None, None, "zig",
+                                SymbolKind::Function,
+                                name,
+                                path,
+                                node,
+                                source,
+                                None,
+                                None,
+                                "zig",
                             ));
                         }
                         break;
@@ -71,16 +87,14 @@ fn walk_zig(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol
                     } else {
                         (SymbolKind::Variable, Some("pub"))
                     }
-                } else if snippet.trim_start().starts_with("const ")
-                    || snippet.contains(" const ")
+                } else if snippet.trim_start().starts_with("const ") || snippet.contains(" const ")
                 {
                     (SymbolKind::Constant, Some("private"))
                 } else {
                     (SymbolKind::Variable, Some("private"))
                 };
                 symbols.push(make_symbol(
-                    kind, name,
-                    path, node, source, None, vis, "zig",
+                    kind, name, path, node, source, None, vis, "zig",
                 ));
             }
         }

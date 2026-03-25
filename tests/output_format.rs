@@ -36,10 +36,7 @@ fn plain_format_no_header() -> Result<()> {
     write_file(worktree.path(), "src/lib.rs", content)?;
     build_index(worktree.path(), &[("src/lib.rs", content)])?;
 
-    let output = run_collie(
-        worktree.path(),
-        &["search", "rg_test", "--format", "plain"],
-    )?;
+    let output = run_collie(worktree.path(), &["search", "rg_test", "--format", "plain"])?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let text = stdout(&output);
     assert!(
@@ -111,7 +108,13 @@ fn plain_format_no_snippets_shows_paths_only() -> Result<()> {
 
     let output = run_collie(
         worktree.path(),
-        &["search", "rg_paths_only", "--format", "plain", "--no-snippets"],
+        &[
+            "search",
+            "rg_paths_only",
+            "--format",
+            "plain",
+            "--no-snippets",
+        ],
     )?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let text = stdout(&output);
@@ -137,7 +140,15 @@ fn plain_format_with_regex_flag() -> Result<()> {
 
     let output = run_collie(
         worktree.path(),
-        &["search", "-e", "hello.*world", "--format", "plain", "-C", "0"],
+        &[
+            "search",
+            "-e",
+            "hello.*world",
+            "--format",
+            "plain",
+            "-C",
+            "0",
+        ],
     )?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let text = stdout(&output);

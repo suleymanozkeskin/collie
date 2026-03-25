@@ -37,41 +37,74 @@ fn walk_c(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol>)
         "function_definition" => {
             if let Some(name) = extract_declarator_name(node, source) {
                 symbols.push(make_symbol(
-                    SymbolKind::Function, &name,
-                    path, node, source, None, None, "c",
+                    SymbolKind::Function,
+                    &name,
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "c",
                 ));
             }
         }
         "struct_specifier" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Struct, text(name_node, source),
-                    path, node, source, None, None, "c",
+                    SymbolKind::Struct,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "c",
                 ));
             }
         }
         "enum_specifier" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Enum, text(name_node, source),
-                    path, node, source, None, None, "c",
+                    SymbolKind::Enum,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "c",
                 ));
             }
         }
         "type_definition" => {
             if let Some(name) = extract_declarator_name(node, source) {
                 symbols.push(make_symbol(
-                    SymbolKind::TypeAlias, &name,
-                    path, node, source, None, None, "c",
+                    SymbolKind::TypeAlias,
+                    &name,
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "c",
                 ));
             }
         }
         "declaration" => {
-            if node.parent().map_or(false, |p| p.kind() == "translation_unit") {
+            if node
+                .parent()
+                .map_or(false, |p| p.kind() == "translation_unit")
+            {
                 if let Some(name) = extract_declarator_name(node, source) {
                     symbols.push(make_symbol(
-                        SymbolKind::Variable, &name,
-                        path, node, source, None, None, "c",
+                        SymbolKind::Variable,
+                        &name,
+                        path,
+                        node,
+                        source,
+                        None,
+                        None,
+                        "c",
                     ));
                 }
             }
@@ -79,8 +112,14 @@ fn walk_c(node: Node<'_>, source: &[u8], path: &Path, symbols: &mut Vec<Symbol>)
         "preproc_def" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Constant, text(name_node, source),
-                    path, node, source, None, None, "c",
+                    SymbolKind::Constant,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "c",
                 ));
             }
         }
@@ -133,19 +172,28 @@ mod tests {
         let adapter = CAdapter;
         let content = "void handle_request(int fd) { }\nint main() { return 0; }";
         let symbols = adapter.extract_symbols(Path::new("main.c"), content);
-        let fns: Vec<_> = symbols.iter().filter(|s| s.kind == SymbolKind::Function).collect();
-        assert!(!fns.is_empty(), "should find at least one function, got: {:?}",
-            symbols.iter().map(|s| format!("{:?} {}", s.kind, s.name)).collect::<Vec<_>>());
+        let fns: Vec<_> = symbols
+            .iter()
+            .filter(|s| s.kind == SymbolKind::Function)
+            .collect();
+        assert!(
+            !fns.is_empty(),
+            "should find at least one function, got: {:?}",
+            symbols
+                .iter()
+                .map(|s| format!("{:?} {}", s.kind, s.name))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn c_extracts_structs() {
         let adapter = CAdapter;
-        let symbols = adapter.extract_symbols(
-            Path::new("main.c"),
-            "struct Config { int port; };",
-        );
-        let structs: Vec<_> = symbols.iter().filter(|s| s.kind == SymbolKind::Struct).collect();
+        let symbols = adapter.extract_symbols(Path::new("main.c"), "struct Config { int port; };");
+        let structs: Vec<_> = symbols
+            .iter()
+            .filter(|s| s.kind == SymbolKind::Struct)
+            .collect();
         assert_eq!(structs.len(), 1);
         assert_eq!(structs[0].name, "Config");
     }

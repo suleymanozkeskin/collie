@@ -27,7 +27,13 @@ impl LanguageAdapter for RubyAdapter {
             return Vec::new();
         };
         let mut symbols = Vec::new();
-        walk_ruby(tree.root_node(), content.as_bytes(), path, &mut symbols, None);
+        walk_ruby(
+            tree.root_node(),
+            content.as_bytes(),
+            path,
+            &mut symbols,
+            None,
+        );
         symbols
     }
 }
@@ -44,8 +50,14 @@ fn walk_ruby(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Class, name,
-                    path, node, source, container, None, "ruby",
+                    SymbolKind::Class,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "ruby",
                 ));
                 for_each_child(node, |child| {
                     walk_ruby(child, source, path, symbols, Some(name));
@@ -57,8 +69,14 @@ fn walk_ruby(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Module, name,
-                    path, node, source, container, None, "ruby",
+                    SymbolKind::Module,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "ruby",
                 ));
                 for_each_child(node, |child| {
                     walk_ruby(child, source, path, symbols, Some(name));
@@ -74,16 +92,28 @@ fn walk_ruby(
                     SymbolKind::Function
                 };
                 symbols.push(make_symbol(
-                    kind, text(name_node, source),
-                    path, node, source, container, None, "ruby",
+                    kind,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "ruby",
                 ));
             }
         }
         "singleton_method" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Method, text(name_node, source),
-                    path, node, source, container, Some("pub"), "ruby",
+                    SymbolKind::Method,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    container,
+                    Some("pub"),
+                    "ruby",
                 ));
             }
         }
@@ -91,8 +121,14 @@ fn walk_ruby(
             if let Some(left) = node.child_by_field_name("left") {
                 if left.kind() == "constant" {
                     symbols.push(make_symbol(
-                        SymbolKind::Constant, text(left, source),
-                        path, node, source, container, None, "ruby",
+                        SymbolKind::Constant,
+                        text(left, source),
+                        path,
+                        node,
+                        source,
+                        container,
+                        None,
+                        "ruby",
                     ));
                 }
             }
@@ -100,5 +136,7 @@ fn walk_ruby(
         _ => {}
     }
 
-    for_each_child(node, |child| walk_ruby(child, source, path, symbols, container));
+    for_each_child(node, |child| {
+        walk_ruby(child, source, path, symbols, container)
+    });
 }

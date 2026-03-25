@@ -80,24 +80,20 @@ fn walk_rust(
                     helpers::rust_visibility_from_node(node),
                     "rust",
                 ));
-                helpers::for_each_descendant_of_kind(
-                    node,
-                    "field_declaration",
-                    &mut |field| {
-                        if let Some(field_name) = field.child_by_field_name("name") {
-                            symbols.push(helpers::make_symbol(
-                                SymbolKind::Field,
-                                helpers::text(field_name, source),
-                                path,
-                                field,
-                                source,
-                                Some(name),
-                                helpers::rust_visibility_from_node(field),
-                                "rust",
-                            ));
-                        }
-                    },
-                );
+                helpers::for_each_descendant_of_kind(node, "field_declaration", &mut |field| {
+                    if let Some(field_name) = field.child_by_field_name("name") {
+                        symbols.push(helpers::make_symbol(
+                            SymbolKind::Field,
+                            helpers::text(field_name, source),
+                            path,
+                            field,
+                            source,
+                            Some(name),
+                            helpers::rust_visibility_from_node(field),
+                            "rust",
+                        ));
+                    }
+                });
                 return;
             }
         }

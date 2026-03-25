@@ -203,11 +203,7 @@ fn multi_file_isolation() -> Result<()> {
 #[test]
 fn multi_word_exact_match() -> Result<()> {
     let (temp, _, mut builder) = setup()?;
-    let a = write_file(
-        temp.path(),
-        "a.go",
-        "func (h *HollowKubelet) Run() { }",
-    )?;
+    let a = write_file(temp.path(), "a.go", "func (h *HollowKubelet) Run() { }")?;
     builder.index_file(&a)?;
     builder.save()?;
 

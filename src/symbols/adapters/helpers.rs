@@ -22,11 +22,7 @@ pub fn for_each_child(node: Node<'_>, mut f: impl FnMut(Node<'_>)) {
 
 /// Find descendants of a specific kind using a cursor, calling `f` for each.
 /// Avoids the recursive Vec<Node> allocation of the old `descendants_of_kind`.
-pub fn for_each_descendant_of_kind<'a>(
-    node: Node<'a>,
-    kind: &str,
-    f: &mut impl FnMut(Node<'a>),
-) {
+pub fn for_each_descendant_of_kind<'a>(node: Node<'a>, kind: &str, f: &mut impl FnMut(Node<'a>)) {
     let mut cursor = node.walk();
     if !cursor.goto_first_child() {
         return;

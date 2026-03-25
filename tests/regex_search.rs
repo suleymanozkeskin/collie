@@ -1,4 +1,4 @@
-use collie_search::regex_search::{apply_regex_to_file, extract_candidate_query, CandidateQuery};
+use collie_search::regex_search::{CandidateQuery, apply_regex_to_file, extract_candidate_query};
 use std::io::Write;
 
 // --- Literal extraction ---
@@ -74,7 +74,11 @@ fn anchored_pattern_extracts_literals() {
 #[test]
 fn apply_regex_finds_matching_lines() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
-    write!(tmp.as_file(), "line one\nfn hello_world() {{}}\nline three\n").unwrap();
+    write!(
+        tmp.as_file(),
+        "line one\nfn hello_world() {{}}\nline three\n"
+    )
+    .unwrap();
     let re = regex::Regex::new("hello_world").unwrap();
     let matches = apply_regex_to_file(tmp.path(), &re, false).unwrap();
     assert_eq!(matches.len(), 1);
@@ -105,11 +109,7 @@ fn apply_regex_no_match_returns_empty() {
 #[test]
 fn apply_regex_multiline_spans_lines() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
-    write!(
-        tmp.as_file(),
-        "start\nmatch across\nlines end\nafter\n"
-    )
-    .unwrap();
+    write!(tmp.as_file(), "start\nmatch across\nlines end\nafter\n").unwrap();
     let re = regex::RegexBuilder::new("match across\nlines")
         .multi_line(true)
         .dot_matches_new_line(true)

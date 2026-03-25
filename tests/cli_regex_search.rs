@@ -62,11 +62,7 @@ fn regex_search_with_alternation() -> Result<()> {
     let text = stdout(&output);
     assert!(text.contains("a.rs"), "should find a.rs (TODO): {}", text);
     assert!(text.contains("b.rs"), "should find b.rs (FIXME): {}", text);
-    assert!(
-        !text.contains("c.rs"),
-        "should not find c.rs: {}",
-        text
-    );
+    assert!(!text.contains("c.rs"), "should not find c.rs: {}", text);
     Ok(())
 }
 
@@ -164,10 +160,6 @@ fn regex_search_dot_plus_scans_all_files() -> Result<()> {
     let output = run_collie(worktree.path(), &["search", "-e", ".+"])?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let text = stdout(&output);
-    assert!(
-        text.contains("Found"),
-        "should find results, got: {}",
-        text
-    );
+    assert!(text.contains("Found"), "should find results, got: {}", text);
     Ok(())
 }

@@ -27,7 +27,13 @@ impl LanguageAdapter for CSharpAdapter {
             return Vec::new();
         };
         let mut symbols = Vec::new();
-        walk_csharp(tree.root_node(), content.as_bytes(), path, &mut symbols, None);
+        walk_csharp(
+            tree.root_node(),
+            content.as_bytes(),
+            path,
+            &mut symbols,
+            None,
+        );
         symbols
     }
 }
@@ -44,8 +50,14 @@ fn walk_csharp(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Class, name,
-                    path, node, source, container, None, "csharp",
+                    SymbolKind::Class,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "csharp",
                 ));
                 for_each_child(node, |child| {
                     walk_csharp(child, source, path, symbols, Some(name));
@@ -57,8 +69,14 @@ fn walk_csharp(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Struct, name,
-                    path, node, source, container, None, "csharp",
+                    SymbolKind::Struct,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "csharp",
                 ));
                 for_each_child(node, |child| {
                     walk_csharp(child, source, path, symbols, Some(name));
@@ -70,8 +88,14 @@ fn walk_csharp(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Interface, name,
-                    path, node, source, container, None, "csharp",
+                    SymbolKind::Interface,
+                    name,
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "csharp",
                 ));
                 for_each_child(node, |child| {
                     walk_csharp(child, source, path, symbols, Some(name));
@@ -82,8 +106,14 @@ fn walk_csharp(
         "enum_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Enum, text(name_node, source),
-                    path, node, source, container, None, "csharp",
+                    SymbolKind::Enum,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "csharp",
                 ));
             }
         }
@@ -91,8 +121,14 @@ fn walk_csharp(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Module, name,
-                    path, node, source, None, None, "csharp",
+                    SymbolKind::Module,
+                    name,
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "csharp",
                 ));
                 for_each_child(node, |child| {
                     walk_csharp(child, source, path, symbols, Some(name));
@@ -108,16 +144,28 @@ fn walk_csharp(
                     SymbolKind::Function
                 };
                 symbols.push(make_symbol(
-                    kind, text(name_node, source),
-                    path, node, source, container, None, "csharp",
+                    kind,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "csharp",
                 ));
             }
         }
         "property_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Property, text(name_node, source),
-                    path, node, source, container, None, "csharp",
+                    SymbolKind::Property,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "csharp",
                 ));
             }
         }
@@ -129,8 +177,14 @@ fn walk_csharp(
                         if child.kind() == "variable_declarator" {
                             if let Some(name_node) = child.child_by_field_name("name") {
                                 symbols.push(make_symbol(
-                                    SymbolKind::Field, text(name_node, source),
-                                    path, node, source, container, None, "csharp",
+                                    SymbolKind::Field,
+                                    text(name_node, source),
+                                    path,
+                                    node,
+                                    source,
+                                    container,
+                                    None,
+                                    "csharp",
                                 ));
                             }
                         }
@@ -141,5 +195,7 @@ fn walk_csharp(
         _ => {}
     }
 
-    for_each_child(node, |child| walk_csharp(child, source, path, symbols, container));
+    for_each_child(node, |child| {
+        walk_csharp(child, source, path, symbols, container)
+    });
 }

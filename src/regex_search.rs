@@ -121,8 +121,7 @@ pub fn apply_regex_to_file(
 
         for mat in regex.find_iter(&content) {
             let start_ln = byte_to_line(mat.start(), &line_starts);
-            let end_ln =
-                byte_to_line(mat.end().saturating_sub(1).max(mat.start()), &line_starts);
+            let end_ln = byte_to_line(mat.end().saturating_sub(1).max(mat.start()), &line_starts);
             for ln in start_ln..=end_ln {
                 if seen.insert(ln) {
                     if let Some(line) = lines_vec.get(ln) {

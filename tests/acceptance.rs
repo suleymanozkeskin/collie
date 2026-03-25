@@ -122,12 +122,22 @@ fn stop_then_search_reads_last_persisted_state_without_reindex() -> Result<()> {
 fn top_level_search_flag_supports_path() -> Result<()> {
     let cwd = create_worktree()?;
     let target = create_worktree()?;
-    write_file(target.path(), "src/lib.rs", "fn cross_repo_flag_search() {}")?;
-    build_index(target.path(), &[("src/lib.rs", "fn cross_repo_flag_search() {}\n")])?;
+    write_file(
+        target.path(),
+        "src/lib.rs",
+        "fn cross_repo_flag_search() {}",
+    )?;
+    build_index(
+        target.path(),
+        &[("src/lib.rs", "fn cross_repo_flag_search() {}\n")],
+    )?;
 
     let output = Command::new(collie_bin())
         .current_dir(cwd.path())
-        .env(collie_search::paths::STATE_DIR_ENV, state_home(target.path()))
+        .env(
+            collie_search::paths::STATE_DIR_ENV,
+            state_home(target.path()),
+        )
         .args([
             "-s",
             "cross_repo_flag_search",
@@ -135,7 +145,11 @@ fn top_level_search_flag_supports_path() -> Result<()> {
             target.path().to_str().unwrap(),
         ])
         .output()?;
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("Found 1 results"),
         "stdout: {}",

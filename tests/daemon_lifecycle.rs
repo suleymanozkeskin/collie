@@ -720,7 +720,11 @@ fn rebuild_cleans_stale_daemon_metadata() -> Result<()> {
     assert!(status.status.success(), "stderr: {}", stderr(&status));
     let text = stdout(&status);
     assert!(text.contains("Collie daemon status: stopped"));
-    assert!(text.contains("PID: missing"), "status should not retain stale pid: {}", text);
+    assert!(
+        text.contains("PID: missing"),
+        "status should not retain stale pid: {}",
+        text
+    );
     assert!(
         !text.contains("daemon crashed"),
         "status should not report a crash after rebuilding from stale metadata: {}",

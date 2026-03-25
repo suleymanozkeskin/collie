@@ -27,7 +27,13 @@ impl LanguageAdapter for CppAdapter {
             return Vec::new();
         };
         let mut symbols = Vec::new();
-        walk_cpp(tree.root_node(), content.as_bytes(), path, &mut symbols, None);
+        walk_cpp(
+            tree.root_node(),
+            content.as_bytes(),
+            path,
+            &mut symbols,
+            None,
+        );
         symbols
     }
 }
@@ -49,8 +55,14 @@ fn walk_cpp(
                         SymbolKind::Function
                     };
                     symbols.push(make_symbol(
-                        kind, text(name_node, source),
-                        path, node, source, container, None, "cpp",
+                        kind,
+                        text(name_node, source),
+                        path,
+                        node,
+                        source,
+                        container,
+                        None,
+                        "cpp",
                     ));
                 }
             }
@@ -59,8 +71,14 @@ fn walk_cpp(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Class, name,
-                    path, node, source, None, None, "cpp",
+                    SymbolKind::Class,
+                    name,
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "cpp",
                 ));
                 for_each_child(node, |child| {
                     walk_cpp(child, source, path, symbols, Some(name));
@@ -72,8 +90,14 @@ fn walk_cpp(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Struct, name,
-                    path, node, source, None, None, "cpp",
+                    SymbolKind::Struct,
+                    name,
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "cpp",
                 ));
                 for_each_child(node, |child| {
                     walk_cpp(child, source, path, symbols, Some(name));
@@ -84,8 +108,14 @@ fn walk_cpp(
         "enum_specifier" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::Enum, text(name_node, source),
-                    path, node, source, None, None, "cpp",
+                    SymbolKind::Enum,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "cpp",
                 ));
             }
         }
@@ -93,8 +123,14 @@ fn walk_cpp(
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = text(name_node, source);
                 symbols.push(make_symbol(
-                    SymbolKind::Module, name,
-                    path, node, source, None, None, "cpp",
+                    SymbolKind::Module,
+                    name,
+                    path,
+                    node,
+                    source,
+                    None,
+                    None,
+                    "cpp",
                 ));
                 for_each_child(node, |child| {
                     walk_cpp(child, source, path, symbols, Some(name));
@@ -106,14 +142,26 @@ fn walk_cpp(
             if let Some(declarator) = node.child_by_field_name("declarator") {
                 if let Some(name_node) = find_identifier(&declarator) {
                     symbols.push(make_symbol(
-                        SymbolKind::TypeAlias, text(name_node, source),
-                        path, node, source, container, None, "cpp",
+                        SymbolKind::TypeAlias,
+                        text(name_node, source),
+                        path,
+                        node,
+                        source,
+                        container,
+                        None,
+                        "cpp",
                     ));
                 }
             } else if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.push(make_symbol(
-                    SymbolKind::TypeAlias, text(name_node, source),
-                    path, node, source, container, None, "cpp",
+                    SymbolKind::TypeAlias,
+                    text(name_node, source),
+                    path,
+                    node,
+                    source,
+                    container,
+                    None,
+                    "cpp",
                 ));
             }
         }
@@ -121,8 +169,14 @@ fn walk_cpp(
             if let Some(declarator) = node.child_by_field_name("declarator") {
                 if let Some(name_node) = find_identifier(&declarator) {
                     symbols.push(make_symbol(
-                        SymbolKind::Field, text(name_node, source),
-                        path, node, source, container, None, "cpp",
+                        SymbolKind::Field,
+                        text(name_node, source),
+                        path,
+                        node,
+                        source,
+                        container,
+                        None,
+                        "cpp",
                     ));
                 }
             }
@@ -133,7 +187,9 @@ fn walk_cpp(
         _ => {}
     }
 
-    for_each_child(node, |child| walk_cpp(child, source, path, symbols, container));
+    for_each_child(node, |child| {
+        walk_cpp(child, source, path, symbols, container)
+    });
 }
 
 fn find_identifier<'a>(node: &Node<'a>) -> Option<Node<'a>> {

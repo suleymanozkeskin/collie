@@ -3,8 +3,7 @@ use std::path::Path;
 
 /// Extract text from a PDF file using the `pdf-extract` crate.
 pub fn extract_text(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("failed to read PDF: {:?}", path))?;
+    let bytes = std::fs::read(path).with_context(|| format!("failed to read PDF: {:?}", path))?;
     let text = pdf_extract::extract_text_from_mem(&bytes)
         .with_context(|| format!("failed to extract text from PDF: {:?}", path))?;
     Ok(text)
