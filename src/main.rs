@@ -135,6 +135,15 @@ enum Commands {
         #[arg(short = 'e', long = "regex")]
         is_regex: bool,
 
+        /// Regex filter for symbol search results.
+        ///
+        /// Use with kind:/lang:/path: queries to narrow symbol results
+        /// by matching a regex against each symbol's signature or source.
+        ///
+        ///   collie search 'kind:fn %Handler' --symbol-regex '\*.*Server'
+        #[arg(long = "symbol-regex")]
+        symbol_regex: Option<String>,
+
         /// Case-insensitive matching (applies to regex mode)
         #[arg(short = 'i', long)]
         ignore_case: bool,
@@ -274,6 +283,7 @@ fn run() -> anyhow::Result<i32> {
                 before_context,
                 no_snippets,
                 is_regex,
+                symbol_regex,
                 ignore_case,
                 multiline,
                 files_only,
@@ -294,6 +304,7 @@ fn run() -> anyhow::Result<i32> {
                 before_context,
                 no_snippets,
                 is_regex,
+                regex_refine: symbol_regex,
                 ignore_case,
                 multiline,
                 files_only,

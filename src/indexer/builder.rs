@@ -596,14 +596,6 @@ impl IndexBuilder {
         }
     }
 
-    fn count_exact_candidate_query(&self, candidate_query: &CandidateQuery) -> usize {
-        match candidate_query {
-            CandidateQuery::All => self.tantivy.file_count(),
-            CandidateQuery::And(tokens) => self.tantivy.count_multi_term(tokens),
-            CandidateQuery::Or(branches) => self.tantivy.count_any_multi_term_branches(branches),
-        }
-    }
-
     fn merge_candidate_branches<F>(
         &self,
         branches: &[Vec<String>],

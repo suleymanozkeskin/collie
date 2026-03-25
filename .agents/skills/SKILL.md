@@ -56,6 +56,22 @@ collie search -e 'impl.*for.*Error' -i    # case-insensitive
 collie search -e 'struct\s*\{' -U         # multiline (. matches \n)
 ```
 
+### Symbol + Regex (recommended for structural patterns)
+Combine symbol narrowing with regex refinement via `--symbol-regex`.
+Much faster than pure regex for queries about code structure.
+
+```sh
+collie search 'kind:fn %Handler' --symbol-regex '\*.*Server'
+collie search 'kind:method qname:Server::' --symbol-regex 'Handler'
+collie search 'kind:fn %validate%' --symbol-regex 'webhook|Webhook'
+```
+
+**When to use `--symbol-regex` instead of `-e`:**
+- You know the symbol kind (function, method, struct, etc.)
+- You want to match against the signature or body of specific symbols
+- Pure regex would be slow because the pattern is structurally complex
+- Example: "find methods on Server types ending in Handler" → use `kind:fn %Handler --symbol-regex '\*.*Server'` instead of `-e 'func\s+\(.*\*.*Server\)\s+\w+Handler'`
+
 ## Agent-Recommended Flags
 
 Always use `--format json` for programmatic consumption:
@@ -154,6 +170,16 @@ collie search handler -c
 **Regex grep with index acceleration:**
 ```sh
 collie search -e 'errors?\.New\(' --format json -g '*.go'
+```
+
+**Find methods on a specific type with a regex constraint:**
+```sh
+collie search 'kind:method qname:Server::' --symbol-regex 'Handler' --format json
+```
+
+**Find functions whose signature matches a complex pattern:**
+```sh
+collie search 'kind:fn %Handler' --symbol-regex '\*.*Server' --format json
 ```
 
 **Search a different repo without cd:**

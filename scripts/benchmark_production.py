@@ -683,18 +683,24 @@ def measure_queries(
     lexical = []
     for query in profile["lexical_queries"]:
         for _ in range(warmups):
-            subprocess.run(
-                [str(binary), "search", query, "--no-snippets", "-n", "50"],
-                cwd=repo,
-                capture_output=True,
-                text=True,
-            )
-            if rg_path:
+            ensure_measurement_ok(
                 subprocess.run(
-                    [rg_path, "-il", collie_query_to_rg(query), "."],
+                    [str(binary), "search", query, "--no-snippets", "-n", "50"],
                     cwd=repo,
                     capture_output=True,
                     text=True,
+                ),
+                allowed_returncodes={0, 1},
+            )
+            if rg_path:
+                ensure_measurement_ok(
+                    subprocess.run(
+                        [rg_path, "-il", collie_query_to_rg(query), "."],
+                        cwd=repo,
+                        capture_output=True,
+                        text=True,
+                    ),
+                    allowed_returncodes={0, 1},
                 )
 
         collie_runs = [
@@ -735,11 +741,14 @@ def measure_queries(
     symbol = []
     for query in profile["symbol_queries"]:
         for _ in range(warmups):
-            subprocess.run(
-                [str(binary), "search", query, "--no-snippets", "-n", "50"],
-                cwd=repo,
-                capture_output=True,
-                text=True,
+            ensure_measurement_ok(
+                subprocess.run(
+                    [str(binary), "search", query, "--no-snippets", "-n", "50"],
+                    cwd=repo,
+                    capture_output=True,
+                    text=True,
+                ),
+                allowed_returncodes={0, 1},
             )
 
         runs = [
@@ -764,18 +773,24 @@ def measure_queries(
     regex_exhaustive = []
     for query in profile.get("regex_queries", []):
         for _ in range(warmups):
-            subprocess.run(
-                [str(binary), "search", query, "--regex", "--no-snippets", "-n", "50"],
-                cwd=repo,
-                capture_output=True,
-                text=True,
-            )
-            if rg_path:
+            ensure_measurement_ok(
                 subprocess.run(
-                    [rg_path, "-l", query, "."],
+                    [str(binary), "search", query, "--regex", "--no-snippets", "-n", "50"],
                     cwd=repo,
                     capture_output=True,
                     text=True,
+                ),
+                allowed_returncodes={0, 1},
+            )
+            if rg_path:
+                ensure_measurement_ok(
+                    subprocess.run(
+                        [rg_path, "-l", query, "."],
+                        cwd=repo,
+                        capture_output=True,
+                        text=True,
+                    ),
+                    allowed_returncodes={0, 1},
                 )
 
         bounded_runs = [
@@ -832,17 +847,99 @@ def measure_queries(
             }
         )
 
+    symbol_regex = []
+    for entry in profile.get("symbol_regex_queries", []):
+        sym_query = entry["symbol"]
+        regex_pat = entry["regex"]
+        rg_equiv = entry.get("rg_equivalent")
+        label = f"{sym_query} --symbol-regex {regex_pat}"
+
+        for _ in range(warmups):
+            ensure_measurement_ok(
+                subprocess.run(
+                    [
+                        str(binary),
+                        "search",
+                        sym_query,
+                        "--symbol-regex",
+                        regex_pat,
+                        "--no-snippets",
+                        "-n",
+                        "50",
+                    ],
+                    cwd=repo,
+                    capture_output=True,
+                    text=True,
+                ),
+                allowed_returncodes={0, 1},
+            )
+            if rg_path and rg_equiv:
+                subprocess.run(
+                    [rg_path, "-l", rg_equiv, "."],
+                    cwd=repo,
+                    capture_output=True,
+                    text=True,
+                )
+
+        collie_runs = [
+            summarize_run(
+                timed_run(
+                    [
+                        str(binary),
+                        "search",
+                        sym_query,
+                        "--symbol-regex",
+                        regex_pat,
+                        "--no-snippets",
+                        "-n",
+                        "50",
+                    ],
+                    cwd=repo,
+                    time_tool=time_tool,
+                ),
+                parse_collie_count,
+            )
+            for _ in range(runs_per_query)
+        ]
+
+        rg_runs = None
+        if rg_path and rg_equiv:
+            rg_runs = [
+                summarize_run(
+                    timed_run(
+                        [rg_path, "-l", rg_equiv, "."],
+                        cwd=repo,
+                        time_tool=time_tool,
+                    ),
+                    parse_rg_count,
+                )
+                for _ in range(runs_per_query)
+            ]
+
+        symbol_regex.append(
+            {
+                "query": label,
+                "symbol_query": sym_query,
+                "regex_pattern": regex_pat,
+                "rg_equivalent": rg_equiv,
+                "collie": summarize_runs(collie_runs),
+                "rg": summarize_runs(rg_runs) if rg_runs is not None else None,
+            }
+        )
+
     return {
         "lexical": lexical,
         "symbol": symbol,
         "regex_bounded": regex_bounded,
         "regex_exhaustive": regex_exhaustive,
+        "symbol_regex": symbol_regex,
         # Keep backward-compatible key pointing to bounded results.
         "regex": regex_bounded,
     }
 
 
 def summarize_run(metric: dict, count_parser) -> dict:
+    ensure_measurement_ok(metric, allowed_returncodes={0, 1})
     return {
         "wall_ms": metric["wall_ms"],
         "user_ms": metric["user_ms"],
@@ -851,6 +948,24 @@ def summarize_run(metric: dict, count_parser) -> dict:
         "returncode": metric["returncode"],
         "result_count": count_parser(metric["stdout"]),
     }
+
+
+def ensure_measurement_ok(
+    metric: subprocess.CompletedProcess[str] | dict, allowed_returncodes: set[int]
+) -> None:
+    returncode = metric.returncode if hasattr(metric, "returncode") else metric["returncode"]
+    if returncode in allowed_returncodes:
+        return
+
+    command = metric.args if hasattr(metric, "args") else metric.get("command", [])
+    stdout = metric.stdout if hasattr(metric, "stdout") else metric.get("stdout", "")
+    stderr = metric.stderr if hasattr(metric, "stderr") else metric.get("stderr", "")
+    command_text = " ".join(str(part) for part in command)
+    raise RuntimeError(
+        f"benchmark command failed with exit code {returncode}: {command_text}\n"
+        f"stdout:\n{stdout}\n"
+        f"stderr:\n{stderr}"
+    )
 
 
 def summarize_runs(runs: list[dict] | None) -> dict | None:
@@ -1126,6 +1241,9 @@ def print_summary(output_path: Path, report: dict) -> None:
         )
         print_query_snapshot(
             "Regex n=0", query_metrics.get("regex_exhaustive", []), include_rg=True
+        )
+        print_query_snapshot(
+            "Symbol+Regex", query_metrics.get("symbol_regex", []), include_rg=True
         )
 
     if report.get("error"):

@@ -70,6 +70,8 @@ pub struct SearchArgs {
     pub before_context: Option<usize>,
     pub no_snippets: bool,
     pub is_regex: bool,
+    /// Regex refinement pattern for symbol+regex combined search.
+    pub regex_refine: Option<String>,
     pub ignore_case: bool,
     pub multiline: bool,
     pub files_only: bool,
@@ -142,11 +144,15 @@ pub fn run(args: SearchArgs) -> Result<bool> {
 
     crate::daemon::touch_activity(&worktree_root);
 
-    // Symbol search
+    // Symbol search (optionally refined by regex with -e)
     if symbol_query.has_filters() {
         let tantivy = TantivyIndex::open(&index_path.join("tantivy"))
             .with_context(|| format!("Failed to load symbol index from {:?}", index_path))?;
-        let results = tantivy.search_symbols(&symbol_query, limit)?;
+        // Regex refinement is a post-filter over symbol results, so it must
+        // inspect the full symbol result set to remain correct.
+        let has_regex_refine = args.regex_refine.is_some();
+        let symbol_limit = if has_regex_refine { 0 } else { limit };
+        let results = tantivy.search_symbols(&symbol_query, symbol_limit)?;
 
         // Apply glob filter to symbol results
         let results: Vec<_> = if let Some(ref pat) = glob_pattern {
@@ -159,6 +165,46 @@ pub fn run(args: SearchArgs) -> Result<bool> {
                             .map_or(false, |n| pat.matches(n.to_string_lossy().as_ref()))
                 })
                 .collect()
+        } else {
+            results
+        };
+
+        // When -e <regex> is present, use regex to refine symbol results.
+        let results = if let Some(ref refine_pattern) = args.regex_refine {
+            let regex = regex::RegexBuilder::new(refine_pattern)
+                .case_insensitive(args.ignore_case)
+                .dot_matches_new_line(args.multiline)
+                .multi_line(true)
+                .build()
+                .with_context(|| format!("invalid regex: {}", refine_pattern))?;
+            let filtered: Vec<_> = results
+                .into_iter()
+                .filter(|r| {
+                    // Match against signature first (cheap, no I/O).
+                    if let Some(ref sig) = r.signature {
+                        if regex.is_match(sig) {
+                            return true;
+                        }
+                    }
+                    // Fall back to reading the symbol's source lines.
+                    let abs_path = worktree_root.join(&r.repo_rel_path);
+                    match std::fs::read_to_string(&abs_path) {
+                        Ok(content) => {
+                            let lines: Vec<&str> = content.lines().collect();
+                            let start = (r.line_start as usize).saturating_sub(1);
+                            let end = (r.line_end as usize).min(lines.len());
+                            if start >= lines.len() || start >= end {
+                                return false;
+                            }
+                            let snippet = lines[start..end].join("\n");
+                            regex.is_match(&snippet)
+                        }
+                        Err(_) => false,
+                    }
+                })
+                .take(limit)
+                .collect();
+            filtered
         } else {
             results
         };

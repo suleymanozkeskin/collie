@@ -932,7 +932,7 @@
                             </div>
                         </div>
                         <div class="stat-box">
-                            <div class="num">3</div>
+                            <div class="num">4</div>
                             <div class="label">Search modes</div>
                         </div>
                     </div>
@@ -1031,6 +1031,16 @@
                                 ><span class="modes-prompt">$</span> collie search -e <span class="purple">"func\s+\w+Handler"</span>
 <span class="modes-prompt">$</span> collie search -e <span class="purple">"TODO|FIXME|HACK"</span>  <span class="dim"># multi-pattern</span>
 <span class="modes-prompt">$</span> collie search -e <span class="purple">"impl.*Error"</span> -i  <span class="dim"># case-insensitive</span></pre>
+                            </div>
+                            <div class="modes-divider"></div>
+                            <div class="modes-section">
+                                <div class="modes-label green">Symbol + Regex</div>
+                                <div class="modes-desc">
+                                    Structural narrowing + regex refinement via <code>--symbol-regex</code>
+                                </div>
+                                <pre
+                                    class="modes-pre"
+                                ><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn %Handler"</span> --symbol-regex <span class="purple">'\*.*Server'</span></pre>
                             </div>
                         </div>
                     </div>
@@ -1363,6 +1373,62 @@
                     </p>
                 </section>
 
+                <!-- ==================== SYMBOL + REGEX ==================== -->
+                <section>
+                    <p class="section-label">
+                        New capability
+                    </p>
+                    <h2>Symbol + Regex: <span class="accent">--symbol-regex</span></h2>
+                    <p style="font-size: 0.65em; color: #ccc; margin-bottom: 0.5em;">
+                        Narrow with structure first, refine with regex. No rg equivalent.
+                    </p>
+                    <table style="font-size: 0.6em">
+                        <thead>
+                            <tr>
+                                <th>Intent</th>
+                                <th>Collie</th>
+                                <th>rg regex</th>
+                                <th>Speedup</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Methods on <code>*Server</code> ending in <code>Handler</code></td>
+                                <td class="num speedup">50 ms</td>
+                                <td class="num dim">620 ms</td>
+                                <td class="num speedup">12x</td>
+                            </tr>
+                            <tr>
+                                <td>Methods on <code>Server</code> containing <code>Handler</code></td>
+                                <td class="num speedup">&lt;10 ms</td>
+                                <td class="num dim">340 ms</td>
+                                <td class="num speedup">34x+</td>
+                            </tr>
+                            <tr>
+                                <td>Validate functions related to webhooks</td>
+                                <td class="num speedup">130 ms</td>
+                                <td class="num dim">350 ms</td>
+                                <td class="num speedup">2.7x</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="modes-terminal" style="margin-top: 0.6em;">
+                        <div class="modes-term-bar">
+                            <span class="modes-term-dot" style="background:#ff5f56"></span>
+                            <span class="modes-term-dot" style="background:#ffbd2e"></span>
+                            <span class="modes-term-dot" style="background:#27c93f"></span>
+                        </div>
+                        <div class="modes-term-body">
+                            <pre class="modes-pre"><span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn %Handler"</span> <span class="accent">--symbol-regex</span> <span class="purple">'\*.*Server'</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:method qname:Server::"</span> <span class="accent">--symbol-regex</span> <span class="purple">'Handler'</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn %validate%"</span> <span class="accent">--symbol-regex</span> <span class="purple">'webhook|Webhook'</span></pre>
+                        </div>
+                    </div>
+                    <p style="font-size: 0.5em; color: #bbb; margin-top: 0.4em;">
+                        The more structural info in the symbol query, the faster the regex refinement.
+                    </p>
+                </section>
+
                 <!-- ==================== AGENTIC: TASK BREAKDOWN ==================== -->
                 <section>
                     <p class="section-label">
@@ -1671,6 +1737,7 @@
                                 ><span class="modes-prompt">$</span> collie search <span class="accent">"handleRequest"</span>
 <span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn path:src/ init"</span>
 <span class="modes-prompt">$</span> collie search -e <span class="purple">"func\s+\w+Handler"</span>
+<span class="modes-prompt">$</span> collie search <span class="blue">"kind:fn %Handler"</span> --symbol-regex <span class="purple">'\*.*Server'</span>
 <span class="modes-prompt">$</span> collie search <span class="accent">"config"</span> --format json  <span class="dim"># for agents</span></pre>
                             </div>
                             <div class="modes-divider"></div>

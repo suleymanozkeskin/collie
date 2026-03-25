@@ -30,6 +30,18 @@
         "impl.*for.*Index",
         "TODO|FIXME|HACK"
       ],
+      "symbol_regex_queries": [
+        {
+          "symbol": "kind:fn %search",
+          "regex": "tantivy|index",
+          "rg_equivalent": "fn\\s+\\w*search\\w*.*(?:tantivy|index)"
+        },
+        {
+          "symbol": "kind:struct",
+          "regex": "pub struct.*Config",
+          "rg_equivalent": "pub struct\\s+\\w*Config"
+        }
+      ],
       "incremental_candidates": [
         "src/storage/tantivy_index.rs",
         "src/daemon/mod.rs",
@@ -67,6 +79,23 @@
         "TODO|FIXME|HACK",
         "context\\.Context",
         "errors?\\.New\\("
+      ],
+      "symbol_regex_queries": [
+        {
+          "symbol": "kind:fn %Handler",
+          "regex": "\\*.*Server",
+          "rg_equivalent": "func\\s+\\(.*\\*.*Server\\)\\s+\\w+Handler"
+        },
+        {
+          "symbol": "kind:method qname:Server::",
+          "regex": "Handler",
+          "rg_equivalent": "func\\s+\\(.*\\*Server\\)\\s+\\w*Handler"
+        },
+        {
+          "symbol": "kind:fn %validate%",
+          "regex": "webhook|Webhook",
+          "rg_equivalent": "func\\s+\\w*[Vv]alidate\\w*.*[Ww]ebhook"
+        }
       ],
       "incremental_candidates": [
         "pkg/probe/dialer_others.go",

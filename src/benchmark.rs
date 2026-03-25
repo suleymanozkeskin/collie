@@ -39,6 +39,12 @@ pub struct ProductionBenchmarkProfiles {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProductionSymbolRegexQuery {
+    pub symbol: String,
+    pub regex: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ProductionBenchmarkProfile {
     pub key: String,
     pub description: String,
@@ -54,6 +60,8 @@ pub struct ProductionBenchmarkProfile {
     pub max_tracked_files: Option<usize>,
     pub lexical_queries: Vec<String>,
     pub symbol_queries: Vec<String>,
+    #[serde(default)]
+    pub symbol_regex_queries: Vec<ProductionSymbolRegexQuery>,
     pub incremental_candidates: Vec<PathBuf>,
 }
 
@@ -252,6 +260,15 @@ pub fn validate_production_benchmark_profiles(
             if query.trim().is_empty() {
                 bail!(
                     "production benchmark profile {} contains an empty query",
+                    profile.key
+                );
+            }
+        }
+
+        for entry in &profile.symbol_regex_queries {
+            if entry.symbol.trim().is_empty() || entry.regex.trim().is_empty() {
+                bail!(
+                    "production benchmark profile {} contains an empty symbol_regex_queries entry",
                     profile.key
                 );
             }

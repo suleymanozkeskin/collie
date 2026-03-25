@@ -1,7 +1,8 @@
 use anyhow::Result;
 use collie_search::benchmark::{
-    ProductionBenchmarkProfile, ProductionBenchmarkProfiles, default_production_profiles_path,
-    load_production_benchmark_profiles, validate_production_benchmark_profiles,
+    ProductionBenchmarkProfile, ProductionBenchmarkProfiles, ProductionSymbolRegexQuery,
+    default_production_profiles_path, load_production_benchmark_profiles,
+    validate_production_benchmark_profiles,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -78,6 +79,7 @@ fn validation_rejects_duplicate_profile_keys() {
                 max_tracked_files: None,
                 lexical_queries: vec!["config".to_string()],
                 symbol_queries: vec!["kind:fn init".to_string()],
+                symbol_regex_queries: vec![],
                 incremental_candidates: vec![PathBuf::from("src/main.rs")],
             },
             ProductionBenchmarkProfile {
@@ -90,6 +92,7 @@ fn validation_rejects_duplicate_profile_keys() {
                 max_tracked_files: None,
                 lexical_queries: vec!["handler".to_string()],
                 symbol_queries: vec!["kind:fn handler".to_string()],
+                symbol_regex_queries: vec![],
                 incremental_candidates: vec![PathBuf::from("src/lib.rs")],
             },
         ],
@@ -116,6 +119,7 @@ fn specific_profiles_require_default_repo_relpath() {
             max_tracked_files: None,
             lexical_queries: vec!["config".to_string()],
             symbol_queries: vec!["kind:fn init".to_string()],
+            symbol_regex_queries: vec![],
             incremental_candidates: vec![PathBuf::from("src/main.rs")],
         }],
     };
@@ -124,5 +128,34 @@ fn specific_profiles_require_default_repo_relpath() {
     assert!(
         err.to_string()
             .contains("must set default_repo_relpath for specific repos")
+    );
+}
+
+#[test]
+fn validation_rejects_empty_symbol_regex_entries() {
+    let profiles = ProductionBenchmarkProfiles {
+        version: 1,
+        profiles: vec![ProductionBenchmarkProfile {
+            key: "specific".to_string(),
+            description: "repo-bound".to_string(),
+            default_repo_relpath: Some(PathBuf::from(".")),
+            repo_names: vec!["repo-a".to_string()],
+            repo_origin_substrings: vec![],
+            min_tracked_files: None,
+            max_tracked_files: None,
+            lexical_queries: vec!["config".to_string()],
+            symbol_queries: vec!["kind:fn init".to_string()],
+            symbol_regex_queries: vec![ProductionSymbolRegexQuery {
+                symbol: "kind:fn".to_string(),
+                regex: "".to_string(),
+            }],
+            incremental_candidates: vec![PathBuf::from("src/main.rs")],
+        }],
+    };
+
+    let err = validate_production_benchmark_profiles(&profiles).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("contains an empty symbol_regex_queries entry")
     );
 }
