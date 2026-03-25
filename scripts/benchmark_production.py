@@ -144,6 +144,11 @@ def parse_args() -> argparse.Namespace:
         "--output",
         help="Where to write the JSON result. Default: benchmark-results/<timestamp>-production-<repo>.json",
     )
+    parser.add_argument(
+        "--baseline",
+        help="Path to a previous benchmark JSON artifact. "
+        "When provided, compare regex results and flag regressions.",
+    )
     return parser.parse_args()
 
 
@@ -304,6 +309,12 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print_summary(output_path, report)
+
+    if args.baseline and exit_code == 0:
+        gate_result = check_regex_gate(args.baseline, report)
+        if gate_result != 0:
+            exit_code = gate_result
+
     return exit_code
 
 
@@ -749,7 +760,8 @@ def measure_queries(
             }
         )
 
-    regex = []
+    regex_bounded = []
+    regex_exhaustive = []
     for query in profile.get("regex_queries", []):
         for _ in range(warmups):
             subprocess.run(
@@ -766,10 +778,22 @@ def measure_queries(
                     text=True,
                 )
 
-        collie_runs = [
+        bounded_runs = [
             summarize_run(
                 timed_run(
                     [str(binary), "search", query, "--regex", "--no-snippets", "-n", "50"],
+                    cwd=repo,
+                    time_tool=time_tool,
+                ),
+                parse_collie_count,
+            )
+            for _ in range(runs_per_query)
+        ]
+
+        exhaustive_runs = [
+            summarize_run(
+                timed_run(
+                    [str(binary), "search", query, "--regex", "--no-snippets", "-n", "0"],
                     cwd=repo,
                     time_tool=time_tool,
                 ),
@@ -792,18 +816,29 @@ def measure_queries(
                 for _ in range(runs_per_query)
             ]
 
-        regex.append(
+        rg_summary = summarize_runs(rg_runs) if rg_runs is not None else None
+        regex_bounded.append(
             {
                 "query": query,
-                "collie": summarize_runs(collie_runs),
-                "rg": summarize_runs(rg_runs) if rg_runs is not None else None,
+                "collie": summarize_runs(bounded_runs),
+                "rg": rg_summary,
+            }
+        )
+        regex_exhaustive.append(
+            {
+                "query": query,
+                "collie": summarize_runs(exhaustive_runs),
+                "rg": rg_summary,
             }
         )
 
     return {
         "lexical": lexical,
         "symbol": symbol,
-        "regex": regex,
+        "regex_bounded": regex_bounded,
+        "regex_exhaustive": regex_exhaustive,
+        # Keep backward-compatible key pointing to bounded results.
+        "regex": regex_bounded,
     }
 
 
@@ -1086,7 +1121,12 @@ def print_summary(output_path: Path, report: dict) -> None:
         print_section("Query snapshot")
         print_query_snapshot("Lexical", query_metrics.get("lexical", []), include_rg=True)
         print_query_snapshot("Symbol", query_metrics.get("symbol", []), include_rg=False)
-        print_query_snapshot("Regex", query_metrics.get("regex", []), include_rg=True)
+        print_query_snapshot(
+            "Regex n=50", query_metrics.get("regex_bounded", query_metrics.get("regex", [])), include_rg=True
+        )
+        print_query_snapshot(
+            "Regex n=0", query_metrics.get("regex_exhaustive", []), include_rg=True
+        )
 
     if report.get("error"):
         print_section("Error")
@@ -1158,6 +1198,114 @@ def fmt_optional_bytes(value) -> str:
     if value is None:
         return "n/a"
     return format_bytes(int(value))
+
+
+# ---------------------------------------------------------------------------
+# Regex benchmark gate
+# ---------------------------------------------------------------------------
+
+BOUNDED_REGRESSION_THRESHOLD = 2.0
+EXHAUSTIVE_REGRESSION_THRESHOLD = 3.0
+
+
+def _get_p50(entry: dict | None) -> float | None:
+    if entry is None:
+        return None
+    wall = entry.get("summary", {}).get("wall_ms", {})
+    return wall.get("p50")
+
+
+def check_regex_gate(baseline_path: str, current_report: dict) -> int:
+    """Compare regex results against a baseline artifact.
+
+    Returns 0 if the gate passes, 1 if bounded regressions are found.
+    Exhaustive regressions are warned but do not fail the gate.
+    """
+    baseline = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
+    baseline_queries = baseline.get("metrics", {}).get("queries", {})
+    current_queries = current_report.get("metrics", {}).get("queries", {})
+
+    # Build lookup tables: query -> p50
+    def build_lookup(entries: list[dict]) -> dict[str, float]:
+        lookup: dict[str, float] = {}
+        for entry in entries:
+            p50 = _get_p50(entry.get("collie"))
+            if p50 is not None:
+                lookup[entry["query"]] = p50
+        return lookup
+
+    baseline_bounded = build_lookup(
+        baseline_queries.get("regex_bounded", baseline_queries.get("regex", []))
+    )
+    baseline_exhaustive = build_lookup(
+        baseline_queries.get("regex_exhaustive", [])
+    )
+    current_bounded = build_lookup(
+        current_queries.get("regex_bounded", current_queries.get("regex", []))
+    )
+    current_exhaustive = build_lookup(
+        current_queries.get("regex_exhaustive", [])
+    )
+
+    print()
+    print("=" * 100)
+    print("REGEX BENCHMARK GATE")
+    print("=" * 100)
+
+    gate_failed = False
+
+    # --- Bounded (high priority) ---
+    print()
+    print("Bounded (n=50) — regression threshold: {:.0f}x".format(
+        BOUNDED_REGRESSION_THRESHOLD
+    ))
+    print("-" * 60)
+    for query in sorted(set(baseline_bounded) & set(current_bounded)):
+        base_ms = baseline_bounded[query]
+        curr_ms = current_bounded[query]
+        ratio = curr_ms / base_ms if base_ms > 0 else float("inf")
+        status = "PASS"
+        if ratio > BOUNDED_REGRESSION_THRESHOLD:
+            status = "FAIL"
+            gate_failed = True
+        elif ratio > 1.5:
+            status = "WARN"
+        print(
+            f"  {status:4s}  {query:45s}  "
+            f"base={base_ms:8.1f}ms  curr={curr_ms:8.1f}ms  "
+            f"ratio={ratio:.2f}x"
+        )
+
+    # --- Exhaustive (lower priority) ---
+    if baseline_exhaustive and current_exhaustive:
+        print()
+        print("Exhaustive (n=0) — regression threshold: {:.0f}x".format(
+            EXHAUSTIVE_REGRESSION_THRESHOLD
+        ))
+        print("-" * 60)
+        for query in sorted(set(baseline_exhaustive) & set(current_exhaustive)):
+            base_ms = baseline_exhaustive[query]
+            curr_ms = current_exhaustive[query]
+            ratio = curr_ms / base_ms if base_ms > 0 else float("inf")
+            status = "PASS"
+            if ratio > EXHAUSTIVE_REGRESSION_THRESHOLD:
+                status = "WARN"
+            elif ratio > 1.5:
+                status = "WARN"
+            print(
+                f"  {status:4s}  {query:45s}  "
+                f"base={base_ms:8.1f}ms  curr={curr_ms:8.1f}ms  "
+                f"ratio={ratio:.2f}x"
+            )
+
+    print()
+    if gate_failed:
+        print("GATE RESULT: FAIL — bounded regex regression detected")
+    else:
+        print("GATE RESULT: PASS")
+    print()
+
+    return 1 if gate_failed else 0
 
 
 if __name__ == "__main__":

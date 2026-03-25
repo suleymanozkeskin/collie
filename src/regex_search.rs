@@ -1,5 +1,8 @@
+use std::io;
 use std::path::Path;
 
+use grep_regex::RegexMatcher;
+use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
 use regex::Regex;
 use regex_syntax::hir::literal::{ExtractKind, Extractor, Seq};
 
@@ -212,9 +215,133 @@ pub fn apply_regex_to_file(
     }
 }
 
+/// Return whether a compiled regex matches anywhere in a file.
+///
+/// This is used for `--no-snippets`/`-l`/`--count` style searches where the
+/// caller only needs to know whether the file matched, not every matching line.
+pub fn file_has_regex_match(file_path: &Path, regex: &Regex, multiline: bool) -> Option<bool> {
+    if multiline {
+        let content = std::fs::read_to_string(file_path).ok()?;
+        Some(regex.is_match(&content))
+    } else {
+        let file = std::fs::File::open(file_path).ok()?;
+        let mut reader = std::io::BufReader::new(file);
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            let bytes = std::io::BufRead::read_line(&mut reader, &mut line).ok()?;
+            if bytes == 0 {
+                return Some(false);
+            }
+            let trimmed = line.trim_end_matches(['\n', '\r']);
+            if regex.is_match(trimmed) {
+                return Some(true);
+            }
+        }
+    }
+}
+
+/// Apply a grep-style regex matcher to a file, returning matching line numbers
+/// and content.
+///
+/// This is used by exhaustive regex search so the heavy verification path uses
+/// the same search stack as ripgrep's matcher/searcher crates instead of a
+/// handwritten per-file loop.
+pub fn apply_regex_to_file_searcher(
+    file_path: &Path,
+    matcher: &RegexMatcher,
+    multiline: bool,
+) -> Option<Vec<RegexFileMatch>> {
+    let mut searcher = build_regex_searcher(multiline);
+    apply_regex_to_file_with_searcher(file_path, matcher, &mut searcher)
+}
+
+/// Build a reusable grep-style searcher for exhaustive regex verification.
+pub fn build_regex_searcher(multiline: bool) -> Searcher {
+    SearcherBuilder::new()
+        .line_number(true)
+        .multi_line(multiline)
+        .binary_detection(BinaryDetection::none())
+        .build()
+}
+
+/// Apply a grep-style regex matcher using a caller-provided reusable searcher.
+pub fn apply_regex_to_file_with_searcher(
+    file_path: &Path,
+    matcher: &RegexMatcher,
+    searcher: &mut Searcher,
+) -> Option<Vec<RegexFileMatch>> {
+    let mut sink = RegexSink::default();
+    searcher.search_path(matcher, file_path, &mut sink).ok()?;
+    Some(sink.matches)
+}
+
+/// Return whether a grep-style matcher matched a file using a reusable searcher.
+pub fn file_has_regex_match_with_searcher(
+    file_path: &Path,
+    matcher: &RegexMatcher,
+    searcher: &mut Searcher,
+) -> Option<bool> {
+    let mut sink = RegexPresenceSink::default();
+    searcher.search_path(matcher, file_path, &mut sink).ok()?;
+    Some(sink.found)
+}
+
 fn byte_to_line(offset: usize, line_starts: &[usize]) -> usize {
     match line_starts.binary_search(&offset) {
         Ok(idx) => idx,
         Err(idx) => idx.saturating_sub(1),
+    }
+}
+
+fn trim_line_ending(line: &[u8]) -> &[u8] {
+    let line = if line.last() == Some(&b'\n') {
+        &line[..line.len().saturating_sub(1)]
+    } else {
+        line
+    };
+    if line.last() == Some(&b'\r') {
+        &line[..line.len().saturating_sub(1)]
+    } else {
+        line
+    }
+}
+
+#[derive(Default)]
+struct RegexSink {
+    matches: Vec<RegexFileMatch>,
+    seen_lines: std::collections::BTreeSet<usize>,
+}
+
+#[derive(Default)]
+struct RegexPresenceSink {
+    found: bool,
+}
+
+impl Sink for RegexSink {
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        let start_line = mat.line_number().unwrap_or(1) as usize;
+        for (offset, line) in mat.lines().enumerate() {
+            let line_number = start_line + offset;
+            if self.seen_lines.insert(line_number) {
+                self.matches.push(RegexFileMatch {
+                    line_number,
+                    line_content: String::from_utf8_lossy(trim_line_ending(line)).into_owned(),
+                });
+            }
+        }
+        Ok(true)
+    }
+}
+
+impl Sink for RegexPresenceSink {
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, _mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        self.found = true;
+        Ok(false)
     }
 }

@@ -1,5 +1,6 @@
 use collie_search::regex_search::{
-    CandidateQuery, apply_regex_to_file, extract_candidate_query, extract_exact_candidates,
+    CandidateQuery, apply_regex_to_file, apply_regex_to_file_searcher, extract_candidate_query,
+    extract_exact_candidates,
 };
 use std::io::Write;
 
@@ -126,6 +127,30 @@ fn apply_regex_trims_line_endings_in_streaming_mode() {
 }
 
 #[test]
+fn apply_regex_searcher_matches_streaming_line_mode() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    write!(tmp.as_file(), "line one\r\nfn hello_world() {{}}\r\n").unwrap();
+    let re = regex::Regex::new("hello_world").unwrap();
+    let matcher = grep_regex::RegexMatcherBuilder::new()
+        .multi_line(true)
+        .build("hello_world")
+        .unwrap();
+
+    let string_matches = apply_regex_to_file(tmp.path(), &re, false).unwrap();
+    let searcher_matches = apply_regex_to_file_searcher(tmp.path(), &matcher, false).unwrap();
+
+    assert_eq!(string_matches.len(), searcher_matches.len());
+    assert_eq!(
+        string_matches[0].line_number,
+        searcher_matches[0].line_number
+    );
+    assert_eq!(
+        string_matches[0].line_content,
+        searcher_matches[0].line_content
+    );
+}
+
+#[test]
 fn apply_regex_no_match_returns_empty() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     write!(tmp.as_file(), "nothing here\n").unwrap();
@@ -144,6 +169,20 @@ fn apply_regex_multiline_spans_lines() {
         .build()
         .unwrap();
     let matches = apply_regex_to_file(tmp.path(), &re, true).unwrap();
+    assert!(matches.iter().any(|m| m.line_number == 2));
+    assert!(matches.iter().any(|m| m.line_number == 3));
+}
+
+#[test]
+fn apply_regex_searcher_multiline_spans_lines() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    write!(tmp.as_file(), "start\nmatch across\nlines end\nafter\n").unwrap();
+    let matcher = grep_regex::RegexMatcherBuilder::new()
+        .multi_line(true)
+        .dot_matches_new_line(true)
+        .build("match across\nlines")
+        .unwrap();
+    let matches = apply_regex_to_file_searcher(tmp.path(), &matcher, true).unwrap();
     assert!(matches.iter().any(|m| m.line_number == 2));
     assert!(matches.iter().any(|m| m.line_number == 3));
 }

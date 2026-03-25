@@ -367,8 +367,13 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
 }
 
 fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
-    let results =
-        builder.search_regex(opts.pattern, opts.limit, opts.multiline, opts.ignore_case)?;
+    let results = builder.search_regex(
+        opts.pattern,
+        opts.limit,
+        opts.multiline,
+        opts.ignore_case,
+        !opts.no_snippets,
+    )?;
     let results: Vec<_> = results
         .into_iter()
         .filter(|r| match_glob(&r.file_path, opts))
