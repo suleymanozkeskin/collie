@@ -408,6 +408,15 @@ impl IndexBuilder {
         multiline: bool,
         collect_matches: bool,
     ) -> Vec<RegexSearchResult> {
+        let total_files = self.tantivy.file_count();
+        let use_all_files =
+            self.should_bypass_exhaustive_narrowing(total_files, exact_candidates, candidate_query);
+
+        if use_all_files {
+            let files = self.tantivy.list_all_files_shared();
+            return self.verify_regex_parallel(&files, matcher, multiline, collect_matches);
+        }
+
         let mut seen = HashSet::new();
         let mut candidates = Vec::new();
 
@@ -429,17 +438,24 @@ impl IndexBuilder {
             }
         }
 
-        let total_files = self.tantivy.stats().file_count;
-        let use_all_files = candidates.is_empty()
-            || (total_files > 0 && candidates.len() * 100 >= total_files * 25);
-        let files = if use_all_files {
-            self.tantivy.list_all_files()
-        } else {
-            candidates
-        };
+        // If narrowing still produced most files, use cached all-files instead.
+        if total_files > 0 && candidates.len() * 100 >= total_files * 25 {
+            let files = self.tantivy.list_all_files_shared();
+            return self.verify_regex_parallel(&files, matcher, multiline, collect_matches);
+        }
 
+        self.verify_regex_parallel(&candidates, matcher, multiline, collect_matches)
+    }
+
+    fn verify_regex_parallel(
+        &self,
+        files: &[SearchResult],
+        matcher: &RegexMatcher,
+        multiline: bool,
+        collect_matches: bool,
+    ) -> Vec<RegexSearchResult> {
         let mut results: Vec<RegexSearchResult> = files
-            .into_par_iter()
+            .par_iter()
             .map_init(
                 || regex_search::build_regex_searcher(multiline),
                 |searcher, candidate| {
@@ -451,7 +467,7 @@ impl IndexBuilder {
                         )
                         .filter(|matches| !matches.is_empty())
                         .map(|matches| RegexSearchResult {
-                            file_path: candidate.file_path,
+                            file_path: candidate.file_path.clone(),
                             matches,
                         })
                     } else {
@@ -462,7 +478,7 @@ impl IndexBuilder {
                         )
                         .filter(|matched| *matched)
                         .map(|_| RegexSearchResult {
-                            file_path: candidate.file_path,
+                            file_path: candidate.file_path.clone(),
                             matches: Vec::new(),
                         })
                     }
@@ -472,6 +488,42 @@ impl IndexBuilder {
             .collect();
         results.sort_by(|a, b| a.file_path.cmp(&b.file_path));
         results
+    }
+
+    fn should_bypass_exhaustive_narrowing(
+        &self,
+        total_files: usize,
+        exact_candidates: &[ExactCandidate],
+        candidate_query: &CandidateQuery,
+    ) -> bool {
+        if total_files == 0 || matches!(candidate_query, CandidateQuery::All) {
+            return true;
+        }
+
+        let broad_threshold = total_files.saturating_mul(25) / 100;
+        let broad_threshold = broad_threshold.max(1);
+
+        // If any exact phrase candidate is selective, narrowing is worth it.
+        for candidate in exact_candidates.iter().take(4) {
+            let count = self.count_exact_candidate(candidate);
+            if count > 0 && count < broad_threshold {
+                return false;
+            }
+        }
+
+        // For alternations, check the most selective branch — if any single
+        // branch is narrow, per-branch narrowing beats a full scan.
+        match candidate_query {
+            CandidateQuery::All => true,
+            CandidateQuery::And(tokens) => {
+                let count = self.tantivy.count_multi_term(tokens);
+                count == 0 || count >= broad_threshold
+            }
+            CandidateQuery::Or(branches) => {
+                let min_count = self.tantivy.count_min_branch(branches);
+                min_count == 0 || min_count >= broad_threshold
+            }
+        }
     }
 
     fn regex_candidate_passes(&self, candidate_query: &CandidateQuery) -> Vec<Vec<SearchResult>> {
@@ -533,6 +585,22 @@ impl IndexBuilder {
             [] => Vec::new(),
             [(_, token)] => self.tantivy.search_exact_ranked(token, limit),
             _ => self.tantivy.search_phrase_ranked(&candidate.terms, limit),
+        }
+    }
+
+    fn count_exact_candidate(&self, candidate: &ExactCandidate) -> usize {
+        match candidate.terms.as_slice() {
+            [] => 0,
+            [(_, token)] => self.tantivy.count_exact(token),
+            _ => self.tantivy.count_phrase(&candidate.terms),
+        }
+    }
+
+    fn count_exact_candidate_query(&self, candidate_query: &CandidateQuery) -> usize {
+        match candidate_query {
+            CandidateQuery::All => self.tantivy.file_count(),
+            CandidateQuery::And(tokens) => self.tantivy.count_multi_term(tokens),
+            CandidateQuery::Or(branches) => self.tantivy.count_any_multi_term_branches(branches),
         }
     }
 

@@ -252,3 +252,25 @@ fn list_all_files_empty_index() -> Result<()> {
     assert!(index.list_all_files().is_empty());
     Ok(())
 }
+
+#[test]
+fn list_all_files_cache_invalidates_after_commit() -> Result<()> {
+    let (_temp, mut index) = setup()?;
+
+    index.index_file_content("/a.rs".as_ref(), "alpha")?;
+    index.commit()?;
+
+    let first = index.list_all_files();
+    assert_eq!(first.len(), 1);
+
+    index.index_file_content("/b.rs".as_ref(), "beta")?;
+    index.commit()?;
+
+    let second = index.list_all_files();
+    let paths = result_paths(&second);
+    assert_eq!(paths.len(), 2);
+    assert!(paths.contains(&PathBuf::from("/a.rs")));
+    assert!(paths.contains(&PathBuf::from("/b.rs")));
+
+    Ok(())
+}

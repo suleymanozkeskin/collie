@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use tantivy::collector::{DocSetCollector, TopDocs};
 use tantivy::directory::error::LockError;
 use tantivy::indexer::NoMergePolicy;
@@ -17,6 +18,7 @@ use tantivy::{
 use crate::indexer::tokenizer;
 use crate::symbols::{Symbol, SymbolKind, SymbolQuery, SymbolResult};
 
+#[derive(Clone, Debug)]
 pub struct SearchResult {
     pub file_path: PathBuf,
 }
@@ -98,6 +100,7 @@ pub struct TantivyIndex {
     schema: TantivySchema,
     no_merge: bool,
     writer_heap_bytes: usize,
+    file_list_cache: RwLock<Option<Arc<[SearchResult]>>>,
 }
 
 const COLLIE_BODY: &str = "collie_body";
@@ -252,6 +255,7 @@ impl TantivyIndex {
             schema: fields,
             no_merge: false,
             writer_heap_bytes: 15_000_000,
+            file_list_cache: RwLock::new(None),
         })
     }
 
@@ -304,6 +308,7 @@ impl TantivyIndex {
         self.reader
             .reload()
             .context("compact: reader reload failed")?;
+        self.invalidate_file_list_cache();
         let segment_count = self.reader.searcher().segment_readers().len();
 
         // Re-create writer with the appropriate merge policy for continued use
@@ -567,6 +572,7 @@ impl TantivyIndex {
         self.reader
             .reload()
             .context("tantivy reader reload failed")?;
+        self.invalidate_file_list_cache();
         Ok(())
     }
 
@@ -650,11 +656,26 @@ impl TantivyIndex {
 
     /// Return all indexed file paths.
     pub fn list_all_files(&self) -> Vec<SearchResult> {
+        self.list_all_files_shared().to_vec()
+    }
+
+    /// Return a shared reference to all indexed file paths (no clone).
+    pub fn list_all_files_shared(&self) -> Arc<[SearchResult]> {
+        if let Ok(cache) = self.file_list_cache.read() {
+            if let Some(cached) = cache.as_ref() {
+                return Arc::clone(cached);
+            }
+        }
+
         let query = TermQuery::new(
             Term::from_field_text(self.schema.doc_type, "file"),
             IndexRecordOption::Basic,
         );
-        self.execute_file_query(&query)
+        let results: Arc<[SearchResult]> = self.execute_file_query(&query).into();
+        if let Ok(mut cache) = self.file_list_cache.write() {
+            *cache = Some(Arc::clone(&results));
+        }
+        results
     }
 
     /// Return ranked indexed file paths.
@@ -761,6 +782,108 @@ impl TantivyIndex {
         match self.build_phrase_query(terms) {
             Some(query) => self.execute_file_query_ranked(&query, limit),
             None => Vec::new(),
+        }
+    }
+
+    /// Return the number of indexed file docs in the current reader state.
+    pub fn file_count(&self) -> usize {
+        if let Ok(cache) = self.file_list_cache.read() {
+            if let Some(cached) = cache.as_ref() {
+                return cached.len();
+            }
+        }
+        self.count_file_query(&TermQuery::new(
+            Term::from_field_text(self.schema.doc_type, "file"),
+            IndexRecordOption::Basic,
+        ))
+    }
+
+    /// Count files matching any branch where each branch requires all terms.
+    /// For alternations, returns the minimum per-branch count (most selective).
+    pub fn count_min_branch(&self, branches: &[Vec<String>]) -> usize {
+        branches
+            .iter()
+            .filter(|b| !b.is_empty())
+            .map(|branch| self.count_multi_term(branch))
+            .min()
+            .unwrap_or(0)
+    }
+
+    /// Count files containing an exact token.
+    pub fn count_exact(&self, token: &str) -> usize {
+        let normalized = token.to_lowercase();
+        let term = Term::from_field_text(self.schema.body, &normalized);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+        self.count_file_query(&query)
+    }
+
+    /// Count files containing all tokens exactly.
+    pub fn count_multi_term(&self, tokens: &[String]) -> usize {
+        let subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = tokens
+            .iter()
+            .map(|token| {
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(self.schema.body, &token.to_lowercase()),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn tantivy::query::Query>,
+                )
+            })
+            .collect();
+        self.count_file_query(&BooleanQuery::new(subqueries))
+    }
+
+    /// Count files containing all substrings.
+    pub fn count_multi_substring(&self, tokens: &[String]) -> usize {
+        let subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = tokens
+            .iter()
+            .filter_map(|token| {
+                let normalized = token.to_lowercase();
+                let pattern = format!(".*{}.*", regex::escape(&normalized));
+                RegexQuery::from_pattern(&pattern, self.schema.body)
+                    .ok()
+                    .map(|q| (Occur::Must, Box::new(q) as Box<dyn tantivy::query::Query>))
+            })
+            .collect();
+        if subqueries.is_empty() {
+            return 0;
+        }
+        self.count_file_query(&BooleanQuery::new(subqueries))
+    }
+
+    /// Count files containing any branch, where each branch requires all terms.
+    pub fn count_any_multi_term_branches(&self, branches: &[Vec<String>]) -> usize {
+        let mut branch_queries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+        for branch in branches {
+            if branch.is_empty() {
+                continue;
+            }
+            let must_terms: Vec<(Occur, Box<dyn tantivy::query::Query>)> = branch
+                .iter()
+                .map(|token| {
+                    (
+                        Occur::Must,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(self.schema.body, &token.to_lowercase()),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn tantivy::query::Query>,
+                    )
+                })
+                .collect();
+            branch_queries.push((Occur::Should, Box::new(BooleanQuery::new(must_terms))));
+        }
+        if branch_queries.is_empty() {
+            return 0;
+        }
+        self.count_file_query(&BooleanQuery::new(branch_queries))
+    }
+
+    /// Count files containing an exact ordered token sequence.
+    pub fn count_phrase(&self, terms: &[(usize, String)]) -> usize {
+        match self.build_phrase_query(terms) {
+            Some(query) => self.count_file_query(&query),
+            None => 0,
         }
     }
 
@@ -871,6 +994,30 @@ impl TantivyIndex {
         }
 
         results
+    }
+
+    fn count_file_query(&self, query: &dyn tantivy::query::Query) -> usize {
+        let file_filter = BooleanQuery::new(vec![
+            (Occur::Must, query.box_clone()),
+            (
+                Occur::Must,
+                Box::new(TermQuery::new(
+                    Term::from_field_text(self.schema.doc_type, "file"),
+                    IndexRecordOption::Basic,
+                )),
+            ),
+        ]);
+
+        let searcher = self.reader.searcher();
+        searcher
+            .search(&file_filter, &tantivy::collector::Count)
+            .unwrap_or(0)
+    }
+
+    fn invalidate_file_list_cache(&self) {
+        if let Ok(mut cache) = self.file_list_cache.write() {
+            *cache = None;
+        }
     }
 
     fn build_phrase_query(&self, terms: &[(usize, String)]) -> Option<PhraseQuery> {
