@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--binary",
-        help="Path to a prebuilt collie-search binary. Default: target/release/collie-search",
+        help="Path to a prebuilt collie binary. Default: target/release/collie",
     )
     parser.add_argument(
         "--skip-build",
@@ -225,7 +225,7 @@ def main() -> int:
     exit_code = 0
     try:
         stop_daemon(binary, repo, collie_root)
-        reset_collie_state(repo)
+        reset_collie_state(binary, repo, collie_root)
 
         rebuild = timed_run(
             [str(binary), "rebuild", str(repo)],
@@ -235,10 +235,11 @@ def main() -> int:
         if rebuild["returncode"] != 0:
             raise RuntimeError(rebuild["stderr"].strip() or "collie rebuild failed")
 
+        rebuild_status = load_status(binary, repo, collie_root)
         report["metrics"]["rebuild"] = enrich_command_metric(
             rebuild,
-            index_size_bytes=directory_size_bytes(repo / ".collie"),
-            status=load_status(binary, repo, collie_root),
+            index_size_bytes=state_dir_size_bytes(repo, rebuild_status),
+            status=rebuild_status,
         )
 
         if not args.skip_watch:
@@ -249,19 +250,25 @@ def main() -> int:
             )
             if watch["returncode"] != 0:
                 raise RuntimeError(watch["stderr"].strip() or "collie watch failed")
+            watch_status = load_status(binary, repo, collie_root)
             report["metrics"]["watch_ready"] = enrich_command_metric(
                 watch,
-                index_size_bytes=directory_size_bytes(repo / ".collie"),
-                status=load_status(binary, repo, collie_root),
+                index_size_bytes=state_dir_size_bytes(repo, watch_status),
+                status=watch_status,
             )
         else:
             report["metrics"]["watch_ready"] = None
 
+        artifacts_status = (
+            report["metrics"]["watch_ready"]["status"]
+            if report["metrics"]["watch_ready"]
+            else report["metrics"]["rebuild"]["status"]
+        )
         report["metrics"]["artifacts"] = {
             "binary_size_bytes": binary.stat().st_size,
-            "collie_dir_size_bytes": directory_size_bytes(repo / ".collie"),
-            "active_generation_tantivy_size_bytes": directory_size_bytes(
-                active_tantivy_dir(repo / ".collie")
+            "collie_dir_size_bytes": state_dir_size_bytes(repo, artifacts_status),
+            "active_generation_tantivy_size_bytes": active_generation_tantivy_size_bytes(
+                repo, artifacts_status
             ),
         }
 
@@ -304,11 +311,12 @@ def resolve_binary(collie_root: Path, binary_arg: str | None, skip_build: bool) 
     binary = (
         Path(binary_arg).expanduser().resolve()
         if binary_arg
-        else collie_root / "target" / "release" / "collie-search"
+        else collie_root / "target" / "release" / "collie"
     )
     if not skip_build:
+        bin_name = binary.stem or binary.name
         subprocess.run(
-            ["cargo", "build", "--release", "--bin", "collie-search"],
+            ["cargo", "build", "--release", "--bin", bin_name],
             cwd=collie_root,
             check=True,
         )
@@ -594,17 +602,13 @@ def stop_daemon(binary: Path, repo: Path, collie_root: Path) -> None:
     )
 
 
-def reset_collie_state(repo: Path) -> None:
-    collie_dir = repo / ".collie"
-    if not collie_dir.exists():
-        return
-    for child in collie_dir.iterdir():
-        if child.name == "config.toml":
-            continue
-        if child.is_dir():
-            shutil.rmtree(child, ignore_errors=True)
-        else:
-            child.unlink(missing_ok=True)
+def reset_collie_state(binary: Path, repo: Path, collie_root: Path) -> None:
+    subprocess.run(
+        [str(binary), "clean", str(repo)],
+        cwd=collie_root,
+        capture_output=True,
+        text=True,
+    )
 
 
 def active_tantivy_dir(collie_dir: Path) -> Path:
@@ -616,6 +620,22 @@ def active_tantivy_dir(collie_dir: Path) -> Path:
             if gen_tantivy.is_dir():
                 return gen_tantivy
     return collie_dir / "tantivy"
+
+
+def status_index_dir(repo: Path, status: dict | None) -> Path:
+    if status:
+        index_path = status.get("index_path")
+        if index_path:
+            return Path(index_path)
+    return repo / ".collie"
+
+
+def state_dir_size_bytes(repo: Path, status: dict | None) -> int:
+    return directory_size_bytes(status_index_dir(repo, status))
+
+
+def active_generation_tantivy_size_bytes(repo: Path, status: dict | None) -> int:
+    return directory_size_bytes(active_tantivy_dir(status_index_dir(repo, status)))
 
 
 def load_status(binary: Path, repo: Path, collie_root: Path) -> dict | None:

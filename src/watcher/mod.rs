@@ -269,6 +269,7 @@ fn run_processor_loop(
     builder.set_no_merge();
     let mut pending: HashMap<PathBuf, ActionKind> = HashMap::new();
     let mut compacted = false;
+    let mut compaction_attempted = false;
 
     loop {
         // Wait for at least one event, then drain everything available.
@@ -387,7 +388,8 @@ fn run_processor_loop(
         // Background compaction: merge segments once after the first idle
         // period following startup. Improves subsequent search latency
         // without blocking rebuild time-to-ready.
-        if !compacted && pending.is_empty() {
+        if !compacted && !compaction_attempted && pending.is_empty() {
+            compaction_attempted = true;
             if let Ok(_new_segments) = builder.compact() {
                 compacted = true;
             }

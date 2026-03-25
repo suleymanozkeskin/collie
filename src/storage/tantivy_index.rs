@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 use tantivy::collector::{DocSetCollector, TopDocs};
 use tantivy::directory::error::LockError;
@@ -19,11 +21,45 @@ pub struct SearchResult {
     pub file_path: PathBuf,
 }
 
+struct SymbolHeapEntry {
+    result: SymbolResult,
+}
+
+impl PartialEq for SymbolHeapEntry {
+    fn eq(&self, other: &Self) -> bool {
+        cmp_symbol_results(&self.result, &other.result) == Ordering::Equal
+    }
+}
+
+impl Eq for SymbolHeapEntry {}
+
+impl PartialOrd for SymbolHeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SymbolHeapEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        cmp_symbol_results(&self.result, &other.result)
+    }
+}
+
 /// Statistics derived entirely from the Tantivy index.
 pub struct TantivyStats {
     pub unique_terms: usize,
     pub file_count: usize,
     pub segment_count: usize,
+}
+
+fn cmp_symbol_results(a: &SymbolResult, b: &SymbolResult) -> Ordering {
+    a.repo_rel_path
+        .to_string_lossy()
+        .to_lowercase()
+        .cmp(&b.repo_rel_path.to_string_lossy().to_lowercase())
+        .then(a.line_start.cmp(&b.line_start))
+        .then(a.kind.as_str().cmp(b.kind.as_str()))
+        .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
 }
 
 struct TantivySchema {
@@ -38,6 +74,7 @@ struct TantivySchema {
     sym_name_original: Field,
     sym_name_parts: Field,
     sym_qualified_name: Field,
+    sym_qualified_name_reversed: Field,
     sym_qualified_name_original: Field,
     sym_qualified_name_parts: Field,
     sym_kind: Field,
@@ -106,6 +143,7 @@ fn build_schema() -> Schema {
     builder.add_text_field("sym_name_parts", ident_parts_opts);
 
     builder.add_text_field("sym_qualified_name", raw_opts.clone());
+    builder.add_text_field("sym_qualified_name_reversed", raw_opts.clone());
     builder.add_text_field("sym_qualified_name_original", STORED);
 
     let qname_parts_indexing = TextFieldIndexing::default()
@@ -151,6 +189,7 @@ impl TantivySchema {
             sym_name_original: get("sym_name_original")?,
             sym_name_parts: get("sym_name_parts")?,
             sym_qualified_name: get("sym_qualified_name")?,
+            sym_qualified_name_reversed: get("sym_qualified_name_reversed")?,
             sym_qualified_name_original: get("sym_qualified_name_original")?,
             sym_qualified_name_parts: get("sym_qualified_name_parts")?,
             sym_kind: get("sym_kind")?,
@@ -346,6 +385,7 @@ impl TantivyIndex {
         let sym_name_original_f = self.schema.sym_name_original;
         let sym_name_parts_f = self.schema.sym_name_parts;
         let sym_qname_f = self.schema.sym_qualified_name;
+        let sym_qname_reversed_f = self.schema.sym_qualified_name_reversed;
         let sym_qname_original_f = self.schema.sym_qualified_name_original;
         let sym_qname_parts_f = self.schema.sym_qualified_name_parts;
         let sym_kind_f = self.schema.sym_kind;
@@ -373,6 +413,7 @@ impl TantivyIndex {
                 .as_deref()
                 .map(|s| s.to_lowercase())
                 .unwrap_or_default();
+            let qualified_name_reversed: String = qualified_name_lower.chars().rev().collect();
             let qualified_name_original =
                 symbol.qualified_name.as_deref().unwrap_or("").to_string();
             let repo_rel_path = symbol.repo_rel_path.to_string_lossy().to_string();
@@ -386,6 +427,7 @@ impl TantivyIndex {
                 sym_name_original_f => symbol.name.clone(),
                 sym_name_parts_f => symbol.name.clone(),
                 sym_qname_f => qualified_name_lower,
+                sym_qname_reversed_f => qualified_name_reversed,
                 sym_qname_original_f => qualified_name_original.clone(),
                 sym_qname_parts_f => qualified_name_original,
                 sym_kind_f => symbol.kind.as_str(),
@@ -456,6 +498,18 @@ impl TantivyIndex {
             ));
         }
 
+        if let Some(path_prefix) = &query.path_prefix {
+            let path_prefix = path_prefix.to_lowercase();
+            let pat = format!("{}.*", regex::escape(&path_prefix));
+            subqueries.push((
+                Occur::Must,
+                Box::new(
+                    RegexQuery::from_pattern(&pat, self.schema.sym_repo_rel_path_lower)
+                        .context("invalid path prefix regex")?,
+                ),
+            ));
+        }
+
         if !query.name_pattern.is_empty() {
             let name_query = self.build_name_query(&query.name_pattern)?;
             subqueries.push((Occur::Must, name_query));
@@ -473,37 +527,35 @@ impl TantivyIndex {
             .search(&bool_query, &DocSetCollector)
             .context("symbol search failed")?;
 
-        let mut results = Vec::with_capacity(doc_addresses.len().min(limit.max(1)));
+        if limit == 0 {
+            let mut results = Vec::with_capacity(doc_addresses.len());
+            for addr in doc_addresses {
+                let doc: tantivy::TantivyDocument = searcher.doc(addr)?;
+                results.push(self.doc_to_symbol_result(&doc));
+            }
+            results.sort_by(cmp_symbol_results);
+            return Ok(results);
+        }
+
+        let mut heap = BinaryHeap::with_capacity(limit);
         for addr in doc_addresses {
             let doc: tantivy::TantivyDocument = searcher.doc(addr)?;
-            results.push(self.doc_to_symbol_result(&doc));
+            let result = self.doc_to_symbol_result(&doc);
+            if heap.len() < limit {
+                heap.push(SymbolHeapEntry { result });
+                continue;
+            }
+
+            if let Some(worst) = heap.peek() {
+                if cmp_symbol_results(&result, &worst.result) == Ordering::Less {
+                    let _ = heap.pop();
+                    heap.push(SymbolHeapEntry { result });
+                }
+            }
         }
 
-        if let Some(path_prefix) = &query.path_prefix {
-            let path_prefix = path_prefix.to_lowercase();
-            results.retain(|result| {
-                result
-                    .repo_rel_path
-                    .to_string_lossy()
-                    .to_lowercase()
-                    .starts_with(&path_prefix)
-            });
-        }
-
-        results.sort_by(|a, b| {
-            a.repo_rel_path
-                .to_string_lossy()
-                .to_lowercase()
-                .cmp(&b.repo_rel_path.to_string_lossy().to_lowercase())
-                .then(a.line_start.cmp(&b.line_start))
-                .then(a.kind.as_str().cmp(b.kind.as_str()))
-                .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
-
-        if limit > 0 {
-            results.truncate(limit);
-        }
-
+        let mut results: Vec<SymbolResult> = heap.into_iter().map(|entry| entry.result).collect();
+        results.sort_by(cmp_symbol_results);
         Ok(results)
     }
 
@@ -865,9 +917,10 @@ impl TantivyIndex {
             }
             (true, false) => {
                 let suffix = normalized.trim_start_matches('%');
-                let pat = format!(".*{}", regex::escape(suffix));
+                let reversed: String = suffix.chars().rev().collect();
+                let pat = format!("{}.*", regex::escape(&reversed));
                 Ok(Box::new(
-                    RegexQuery::from_pattern(&pat, self.schema.sym_qualified_name)
+                    RegexQuery::from_pattern(&pat, self.schema.sym_qualified_name_reversed)
                         .context("invalid qname suffix regex")?,
                 ))
             }

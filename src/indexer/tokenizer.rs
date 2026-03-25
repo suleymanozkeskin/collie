@@ -49,16 +49,20 @@ impl Tokenizer {
                 }
                 current_token.push(ch);
             } else if in_token {
-                if current_token.len() >= 2 {
-                    tokens.push(Token::new(current_token.to_lowercase(), token_start));
+                let lowered = current_token.to_lowercase();
+                if lowered.len() >= 2 {
+                    tokens.push(Token::new(lowered, token_start));
                 }
                 current_token.clear();
                 in_token = false;
             }
         }
 
-        if in_token && current_token.len() >= 2 {
-            tokens.push(Token::new(current_token.to_lowercase(), token_start));
+        if in_token {
+            let lowered = current_token.to_lowercase();
+            if lowered.len() >= 2 {
+                tokens.push(Token::new(lowered, token_start));
+            }
         }
 
         tokens
@@ -561,27 +565,29 @@ pub fn pretokenize_body(content: &str) -> PreTokenizedString {
             }
         } else if in_token {
             let raw = &content[current_start..idx];
-            if raw.len() >= 2 {
+            let lowered = raw.to_lowercase();
+            if lowered.len() >= 2 {
                 tokens.push(TantivyToken {
                     offset_from: current_start,
                     offset_to: idx,
                     position,
-                    text: raw.to_lowercase(),
+                    text: lowered,
                     position_length: 1,
                 });
-                position += 1;
             }
+            position += 1;
             in_token = false;
         }
     }
     if in_token {
         let raw = &content[current_start..];
-        if raw.len() >= 2 {
+        let lowered = raw.to_lowercase();
+        if lowered.len() >= 2 {
             tokens.push(TantivyToken {
                 offset_from: current_start,
                 offset_to: content.len(),
                 position,
-                text: raw.to_lowercase(),
+                text: lowered,
                 position_length: 1,
             });
         }
@@ -609,27 +615,29 @@ pub fn pretokenize_body_reversed(content: &str) -> PreTokenizedString {
             }
         } else if in_token {
             let raw = &content[current_start..idx];
-            if raw.len() >= 2 {
+            let lowered = raw.to_lowercase();
+            if lowered.len() >= 2 {
                 tokens.push(TantivyToken {
                     offset_from: current_start,
                     offset_to: idx,
                     position,
-                    text: raw.to_lowercase().chars().rev().collect(),
+                    text: lowered.chars().rev().collect(),
                     position_length: 1,
                 });
-                position += 1;
             }
+            position += 1;
             in_token = false;
         }
     }
     if in_token {
         let raw = &content[current_start..];
-        if raw.len() >= 2 {
+        let lowered = raw.to_lowercase();
+        if lowered.len() >= 2 {
             tokens.push(TantivyToken {
                 offset_from: current_start,
                 offset_to: content.len(),
                 position,
-                text: raw.to_lowercase().chars().rev().collect(),
+                text: lowered.chars().rev().collect(),
                 position_length: 1,
             });
         }
@@ -730,6 +738,52 @@ mod tests {
         );
 
         assert_eq!(lazy_texts, tantivy_texts);
+    }
+
+    #[test]
+    fn collie_body_matches_lazy_tokenizer_for_unicode_casefold() {
+        let tokenizer = Tokenizer::new();
+        let lazy_tokens = tokenizer.tokenize("K");
+        let lazy_texts: Vec<_> = lazy_tokens.iter().map(|t| t.text.as_str()).collect();
+
+        let mut analyzer = collie_body_analyzer();
+        let tantivy_texts = collect_tokens(&mut analyzer, "K");
+
+        assert_eq!(lazy_texts, tantivy_texts);
+        assert!(lazy_texts.is_empty());
+    }
+
+    #[test]
+    fn pretokenize_body_matches_analyzer_positions_after_short_token_filtering() {
+        let text = "a bc d ef";
+        let pre = pretokenize_body(text);
+
+        let mut analyzer = collie_body_analyzer();
+        let mut stream = analyzer.token_stream(text);
+        let mut analyzed = Vec::new();
+        while let Some(token) = stream.next() {
+            analyzed.push((
+                token.text.clone(),
+                token.position,
+                token.offset_from,
+                token.offset_to,
+            ));
+        }
+
+        let pretokenized: Vec<_> = pre
+            .tokens
+            .into_iter()
+            .map(|token| {
+                (
+                    token.text,
+                    token.position,
+                    token.offset_from,
+                    token.offset_to,
+                )
+            })
+            .collect();
+
+        assert_eq!(pretokenized, analyzed);
     }
 
     #[test]

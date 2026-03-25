@@ -294,6 +294,26 @@ fn qualified_name_search() -> Result<()> {
 }
 
 #[test]
+fn qualified_name_suffix_search() -> Result<()> {
+    let (_temp, mut index) = open_index()?;
+    let mut symbol = sym(SymbolKind::Method, "handleRequest", "rust", "a.rs");
+    symbol.qualified_name = Some("Server::handleRequest".to_string());
+    index.index_symbols(Path::new("/a.rs"), &[symbol])?;
+    index.commit()?;
+
+    let results = index.search_symbols(
+        &SymbolQuery {
+            qualified_name_pattern: Some("%handlerequest".to_string()),
+            ..SymbolQuery::default()
+        },
+        0,
+    )?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "handleRequest");
+    Ok(())
+}
+
+#[test]
 fn symbol_results_include_all_fields() -> Result<()> {
     let (_temp, mut index) = open_index()?;
     let mut symbol = sym(

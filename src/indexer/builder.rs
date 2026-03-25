@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -201,8 +202,11 @@ impl IndexBuilder {
         body_reversed_tokens: tantivy::tokenizer::PreTokenizedString,
         symbols: &[crate::symbols::Symbol],
     ) -> Result<()> {
-        self.tantivy
-            .index_file_content_pretokenized(file_path, body_tokens, body_reversed_tokens)?;
+        self.tantivy.index_file_content_pretokenized(
+            file_path,
+            body_tokens,
+            body_reversed_tokens,
+        )?;
         if !symbols.is_empty() {
             self.tantivy.index_symbols(file_path, symbols)?;
         }
@@ -287,13 +291,10 @@ impl IndexBuilder {
             PatternMode::Exact => self.tantivy.search_exact_ranked(&parsed.tokens[0], limit),
             PatternMode::Prefix => self.tantivy.search_prefix_ranked(&parsed.tokens[0], limit),
             PatternMode::Suffix => self.tantivy.search_suffix_ranked(&parsed.tokens[0], limit),
-            PatternMode::Substring => {
-                self.tantivy
-                    .search_substring_ranked(&parsed.tokens[0], limit)
-            }
-            PatternMode::MultiTerm => {
-                self.tantivy.search_multi_term_ranked(&parsed.tokens, limit)
-            }
+            PatternMode::Substring => self
+                .tantivy
+                .search_substring_ranked(&parsed.tokens[0], limit),
+            PatternMode::MultiTerm => self.tantivy.search_multi_term_ranked(&parsed.tokens, limit),
         }
     }
 
@@ -321,43 +322,67 @@ impl IndexBuilder {
             .with_context(|| format!("invalid regex: {}", pattern))?;
 
         let candidate_query = regex_search::extract_candidate_query(pattern);
-        // Use substring matching (not exact term) because regex literals may be
-        // fragments of larger indexed tokens (e.g. "hello" from "hello.*world"
-        // needs to match the indexed token "hello_world").
-        let candidates = match &candidate_query {
-            CandidateQuery::All => self.tantivy.list_all_files(),
-            CandidateQuery::And(tokens) => self.tantivy.search_multi_substring(tokens),
+        let mut results = Vec::new();
+        let mut seen_candidates = HashSet::new();
+
+        let candidate_passes = match &candidate_query {
+            CandidateQuery::All => vec![self.tantivy.list_all_files()],
+            CandidateQuery::And(tokens) => vec![
+                self.tantivy.search_multi_term(tokens),
+                self.tantivy.search_multi_substring(tokens),
+            ],
             CandidateQuery::Or(branches) => {
-                let mut seen = std::collections::HashSet::new();
-                let mut all = Vec::new();
-                for branch in branches {
-                    for r in self.tantivy.search_multi_substring(branch) {
-                        if seen.insert(r.file_path.clone()) {
-                            all.push(r);
-                        }
-                    }
-                }
-                all
+                let exact = self.merge_candidate_branches(branches, |branch| {
+                    self.tantivy.search_multi_term(branch)
+                });
+                let substring = self.merge_candidate_branches(branches, |branch| {
+                    self.tantivy.search_multi_substring(branch)
+                });
+                vec![exact, substring]
             }
         };
 
-        let mut results = Vec::new();
-        for candidate in &candidates {
-            if results.len() >= limit {
-                break;
-            }
-            if let Some(file_matches) =
-                regex_search::apply_regex_to_file(&candidate.file_path, &regex, multiline)
-            {
-                if !file_matches.is_empty() {
-                    results.push(RegexSearchResult {
-                        file_path: candidate.file_path.clone(),
-                        matches: file_matches,
-                    });
+        for candidates in candidate_passes {
+            for candidate in candidates {
+                if !seen_candidates.insert(candidate.file_path.clone()) {
+                    continue;
+                }
+                if limit > 0 && results.len() >= limit {
+                    return Ok(results);
+                }
+                if let Some(file_matches) =
+                    regex_search::apply_regex_to_file(&candidate.file_path, &regex, multiline)
+                {
+                    if !file_matches.is_empty() {
+                        results.push(RegexSearchResult {
+                            file_path: candidate.file_path,
+                            matches: file_matches,
+                        });
+                    }
                 }
             }
         }
         Ok(results)
+    }
+
+    fn merge_candidate_branches<F>(
+        &self,
+        branches: &[Vec<String>],
+        mut search: F,
+    ) -> Vec<SearchResult>
+    where
+        F: FnMut(&[String]) -> Vec<SearchResult>,
+    {
+        let mut seen = HashSet::new();
+        let mut all = Vec::new();
+        for branch in branches {
+            for result in search(branch) {
+                if seen.insert(result.file_path.clone()) {
+                    all.push(result);
+                }
+            }
+        }
+        all
     }
 
     /// Get index statistics. All values derived from the Tantivy index.
