@@ -1,0 +1,43 @@
+{
+  "name": "collie",
+  "version": "0.1.0",
+  "description": "Reusable Codex plugin for installing and using Collie for fast index-backed code search.",
+  "author": {
+    "name": "Suleyman Ozkeskin",
+    "url": "https://github.com/suleymanozkeskin"
+  },
+  "homepage": "https://suleymanozkeskin.github.io/collie/",
+  "repository": "https://github.com/suleymanozkeskin/collie",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "code-search",
+    "developer-tools",
+    "indexing",
+    "plugin",
+    "search"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Collie",
+    "shortDescription": "Install Collie and use indexed code search from Codex.",
+    "longDescription": "Installs or upgrades the latest published Collie CLI, then gives Codex a reusable skill for fast token, symbol, and regex search over local repositories.",
+    "developerName": "Suleyman Ozkeskin",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Shell"
+    ],
+    "websiteURL": "https://suleymanozkeskin.github.io/collie/",
+    "privacyPolicyURL": "https://github.com/suleymanozkeskin/collie/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/suleymanozkeskin/collie/blob/main/TERMS.md",
+    "defaultPrompt": [
+      "Set up Collie in this repository.",
+      "Use Collie to find the code paths that implement this feature.",
+      "Use Collie JSON output to search this repo before editing code."
+    ],
+    "brandColor": "#FF8E3C",
+    "composerIcon": "./assets/collie.png",
+    "logo": "./assets/collie.png"
+  }
+}

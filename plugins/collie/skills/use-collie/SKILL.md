@@ -1,3 +1,33 @@
+---
+name: use-collie
+description: Install or upgrade the latest published Collie CLI, then use it for fast, index-backed code search.
+---
+
+# Use Collie
+
+<!-- Generated from `/.agents/skills/SKILL.md` by `scripts/sync_plugin_skill.py`. -->
+
+Use this skill when the user wants fast local code search, symbol lookup, regex search, or Collie setup in a repository.
+
+## Install or upgrade
+
+1. Check whether `cargo` is available.
+2. Check whether `collie` is already installed with `collie --version`.
+3. If `collie` is missing, or if you need to ensure the latest published version is installed, run:
+
+```sh
+cargo install collie-search --locked
+```
+
+This installs the `collie` command from the latest published `collie-search` crate.
+
+4. Verify the installed version:
+
+```sh
+collie --version
+```
+
+If `cargo` is unavailable, tell the user Rust/Cargo must be installed before this plugin can install Collie.
 
 # Collie — Index-Backed Code Search
 
@@ -5,27 +35,6 @@ Collie indexes source files and provides near-instant search over large codebase
 It runs as a background daemon that watches for file changes and keeps the index current.
 
 Install: `cargo install collie-search` (installs the `collie` command).
-
-Teach your agent, all they have to run is `collie skill`
-
-[Presentation](https://suleymanozkeskin.github.io/collie/)
-
-## Codex Plugin
-
-This repository includes a Codex plugin bundle for Collie under `plugins/collie`.
-
-For install and distribution details, see [PLUGIN.md](./PLUGIN.md).
-The public presentation is at <https://suleymanozkeskin.github.io/collie/>.
-
-## Development
-
-Install the shared git hooks once per clone:
-
-```sh
-./scripts/install_git_hooks.sh
-```
-
-The pre-commit hook regenerates `plugins/collie/skills/use-collie/SKILL.md` from `.agents/skills/SKILL.md` when any related skill files change.
 
 ## Setup
 
@@ -72,6 +81,22 @@ collie search -e 'TODO|FIXME|HACK'
 collie search -e 'impl.*for.*Error' -i    # case-insensitive
 collie search -e 'struct\s*\{' -U         # multiline (. matches \n)
 ```
+
+### Symbol + Regex (recommended for structural patterns)
+Combine symbol narrowing with regex refinement via `--symbol-regex`.
+Much faster than pure regex for queries about code structure.
+
+```sh
+collie search 'kind:fn %Handler' --symbol-regex '\*.*Server'
+collie search 'kind:method qname:Server::' --symbol-regex 'Handler'
+collie search 'kind:fn %validate%' --symbol-regex 'webhook|Webhook'
+```
+
+**When to use `--symbol-regex` instead of `-e`:**
+- You know the symbol kind (function, method, struct, etc.)
+- You want to match against the signature or body of specific symbols
+- Pure regex would be slow because the pattern is structurally complex
+- Example: "find methods on Server types ending in Handler" → use `kind:fn %Handler --symbol-regex '\*.*Server'` instead of `-e 'func\s+\(.*\*.*Server\)\s+\w+Handler'`
 
 ## Agent-Recommended Flags
 
@@ -171,6 +196,16 @@ collie search handler -c
 **Regex grep with index acceleration:**
 ```sh
 collie search -e 'errors?\.New\(' --format json -g '*.go'
+```
+
+**Find methods on a specific type with a regex constraint:**
+```sh
+collie search 'kind:method qname:Server::' --symbol-regex 'Handler' --format json
+```
+
+**Find functions whose signature matches a complex pattern:**
+```sh
+collie search 'kind:fn %Handler' --symbol-regex '\*.*Server' --format json
 ```
 
 **Search a different repo without cd:**

@@ -1,0 +1,20 @@
+{
+  "name": "collie-marketplace",
+  "interface": {
+    "displayName": "Collie Plugins"
+  },
+  "plugins": [
+    {
+      "name": "collie",
+      "source": {
+        "source": "local",
+        "path": "./plugins/collie"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
