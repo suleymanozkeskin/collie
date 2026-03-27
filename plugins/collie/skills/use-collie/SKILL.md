@@ -45,6 +45,25 @@ collie stop .           # Stop the daemon when done
 collie clean .          # Remove index and free disk space
 ```
 
+## Repository Scoping
+
+Scope Collie to the actual target repository before trusting results.
+
+- If your current workspace contains multiple repositories, fixtures, or large test corpora, do not default to `.`.
+- Prefer running Collie from the real repo root, or pass `--path /absolute/repo/path`.
+- Rebuild or watch the same scoped path you plan to search.
+- Use `-g` only for narrowing inside an already-correct repo scope, not as a substitute for choosing the right repo root.
+
+Examples:
+
+```sh
+collie rebuild /path/to/repo
+collie search handler --path /path/to/repo --format json
+collie search 'kind:fn init' --path /path/to/repo --format json
+```
+
+If a workspace contains fixture trees such as `large-repo-for-test`, broad searches from `.` can return irrelevant noise even when the query itself is correct.
+
 ## Search Modes
 
 ### Token search (default)
@@ -106,6 +125,14 @@ Always use `--format json` for programmatic consumption:
 collie search handler --format json -n 20
 collie search 'kind:fn init' --format json
 collie search -e 'TODO|FIXME' --format json -g '*.go'
+```
+
+For agent use, prefer explicit repo scoping together with JSON output:
+
+```sh
+collie search handler --path /path/to/repo --format json -n 20
+collie search 'kind:fn init' --path /path/to/repo --format json
+collie search -e 'TODO|FIXME' --path /path/to/repo --format json -g '*.go'
 ```
 
 ### JSON output schema
@@ -170,22 +197,22 @@ collie skill                              # print this reference
 
 **Find files containing a term:**
 ```sh
-collie search handler -l --format json
+collie search handler --path /path/to/repo -l --format json
 ```
 
 **Find function definitions:**
 ```sh
-collie search 'kind:fn handler' --format json
+collie search 'kind:fn handler' --path /path/to/repo --format json
 ```
 
 **Scope search to a directory:**
 ```sh
-collie search handler -g 'src/api/**' --format json
+collie search handler --path /path/to/repo -g 'src/api/**' --format json
 ```
 
 **Scope symbol search to file type:**
 ```sh
-collie search 'kind:fn init' -g '*.go' --format json
+collie search 'kind:fn init' --path /path/to/repo -g '*.go' --format json
 ```
 
 **Count occurrences before diving in:**
@@ -195,17 +222,17 @@ collie search handler -c
 
 **Regex grep with index acceleration:**
 ```sh
-collie search -e 'errors?\.New\(' --format json -g '*.go'
+collie search -e 'errors?\.New\(' --path /path/to/repo --format json -g '*.go'
 ```
 
 **Find methods on a specific type with a regex constraint:**
 ```sh
-collie search 'kind:method qname:Server::' --symbol-regex 'Handler' --format json
+collie search 'kind:method qname:Server::' --path /path/to/repo --symbol-regex 'Handler' --format json
 ```
 
 **Find functions whose signature matches a complex pattern:**
 ```sh
-collie search 'kind:fn %Handler' --symbol-regex '\*.*Server' --format json
+collie search 'kind:fn %Handler' --path /path/to/repo --symbol-regex '\*.*Server' --format json
 ```
 
 **Search a different repo without cd:**
