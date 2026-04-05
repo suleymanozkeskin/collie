@@ -80,11 +80,23 @@ collie search 'handle request'           # multi-term AND
 ### Symbol search
 Structured queries for functions, types, methods. Use `kind:`, `lang:`, `path:`, `qname:` filters.
 
+**Name matching is EXACT by default.** `kind:fn handler` matches only a symbol named
+exactly `handler` — it will NOT match `handleRequest` or `requestHandler`.
+Use `%` wildcards for flexible matching (same syntax as token search):
+
+| Pattern | Matches |
+|---------|---------|
+| `kind:fn handler` | only `handler` (exact) |
+| `kind:fn handler%` | `handler`, `handlerFunc`, … (prefix) |
+| `kind:fn %handler` | `handler`, `requestHandler`, … (suffix) |
+| `kind:fn %handler%` | anything containing `handler` (substring) |
+
 ```sh
-collie search 'kind:fn handler'
-collie search 'kind:struct Config'
-collie search 'kind:method qname:Server::run'
-collie search 'kind:fn lang:go path:pkg/api/ init'
+collie search 'kind:fn %handler%'                        # functions containing "handler"
+collie search 'kind:struct %Config%'                      # structs containing "Config"
+collie search 'kind:fn handler'                           # exact match only
+collie search 'kind:method qname:Server::run'             # qualified name
+collie search 'kind:fn lang:go path:pkg/api/ %init%'     # scoped substring
 ```
 
 **Supported kinds:** function, method, class, struct, enum, interface, trait, variable, field, constant, module, type_alias, import
@@ -123,7 +135,7 @@ Always use `--format json` for programmatic consumption:
 
 ```sh
 collie search handler --format json -n 20
-collie search 'kind:fn init' --format json
+collie search 'kind:fn %init%' --format json
 collie search -e 'TODO|FIXME' --format json -g '*.go'
 ```
 
@@ -131,7 +143,7 @@ For agent use, prefer explicit repo scoping together with JSON output:
 
 ```sh
 collie search handler --path /path/to/repo --format json -n 20
-collie search 'kind:fn init' --path /path/to/repo --format json
+collie search 'kind:fn %init%' --path /path/to/repo --format json
 collie search -e 'TODO|FIXME' --path /path/to/repo --format json -g '*.go'
 ```
 
@@ -200,9 +212,9 @@ collie skill                              # print this reference
 collie search handler --path /path/to/repo -l --format json
 ```
 
-**Find function definitions:**
+**Find function definitions (substring — use `%` wildcards):**
 ```sh
-collie search 'kind:fn handler' --path /path/to/repo --format json
+collie search 'kind:fn %handler%' --path /path/to/repo --format json
 ```
 
 **Scope search to a directory:**
@@ -212,7 +224,7 @@ collie search handler --path /path/to/repo -g 'src/api/**' --format json
 
 **Scope symbol search to file type:**
 ```sh
-collie search 'kind:fn init' --path /path/to/repo -g '*.go' --format json
+collie search 'kind:fn %init%' --path /path/to/repo -g '*.go' --format json
 ```
 
 **Count occurrences before diving in:**
