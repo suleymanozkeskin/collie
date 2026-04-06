@@ -11,7 +11,7 @@ use crate::indexer::tokenizer::tokenize_query;
 use crate::regex_search::{
     self, CandidateQuery, ExactCandidate, LiteralQuery, RegexFileMatch, RegexSnippet,
 };
-use crate::storage::tantivy_index::TantivyIndex;
+use crate::storage::tantivy_index::{IndexedTextStore, TantivyIndex};
 use crate::storage::{IndexStats, SearchResult};
 use crate::symbols::adapters::AdapterRegistry;
 use crate::symbols::{SymbolQuery, SymbolResult};
@@ -482,7 +482,7 @@ impl IndexBuilder {
     ) -> Vec<RegexSearchResult> {
         let indexed_texts =
             Self::should_use_indexed_text_exhaustive(candidate_query, literal_query)
-                .then(|| self.tantivy.indexed_texts_shared());
+                .then(|| self.tantivy.indexed_text_store_shared());
         let candidates = self.collect_exhaustive_regex_candidates(
             exact_candidates,
             candidate_query,
@@ -512,7 +512,7 @@ impl IndexBuilder {
     ) -> usize {
         let indexed_texts =
             Self::should_use_indexed_text_exhaustive(candidate_query, literal_query)
-                .then(|| self.tantivy.indexed_texts_shared());
+                .then(|| self.tantivy.indexed_text_store_shared());
         let candidates = self.collect_exhaustive_regex_candidates(
             exact_candidates,
             candidate_query,
@@ -534,7 +534,7 @@ impl IndexBuilder {
         candidate_query: &CandidateQuery,
         literal_query: &LiteralQuery,
         ignore_case: bool,
-        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
+        indexed_texts: Option<Arc<IndexedTextStore>>,
     ) -> ExhaustiveRegexCandidates {
         let total_files = self.tantivy.file_count();
         let use_all_files =
@@ -589,7 +589,7 @@ impl IndexBuilder {
     fn prefilter_exhaustive_candidates_from_indexed_text(
         &self,
         literal_query: &LiteralQuery,
-        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
+        indexed_texts: Option<Arc<IndexedTextStore>>,
     ) -> Option<Vec<SearchResult>> {
         if !Self::should_prefilter_from_indexed_text(literal_query) {
             return None;
@@ -602,7 +602,7 @@ impl IndexBuilder {
             let Some(content) = indexed_texts.get(candidate.file_path.as_path()) else {
                 continue;
             };
-            if regex_search::literal_query_matches(content.as_ref(), literal_query) {
+            if regex_search::literal_query_matches(content, literal_query) {
                 candidates.push(candidate.clone());
             }
         }
@@ -678,7 +678,7 @@ impl IndexBuilder {
         collect_matches: bool,
         before_context: usize,
         after_context: usize,
-        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
+        indexed_texts: Option<Arc<IndexedTextStore>>,
     ) -> Vec<RegexSearchResult> {
         let mut results: Vec<RegexSearchResult> = files
             .par_iter()
@@ -698,7 +698,7 @@ impl IndexBuilder {
                         indexed_text
                             .and_then(|content| {
                                 regex_search::apply_regex_to_content_with_context_with_searcher(
-                                    content.as_ref(),
+                                    content,
                                     matcher,
                                     searcher,
                                 )
@@ -720,7 +720,7 @@ impl IndexBuilder {
                         indexed_text
                             .and_then(|content| {
                                 regex_search::content_has_regex_match_with_searcher(
-                                    content.as_ref(),
+                                    content,
                                     matcher,
                                     searcher,
                                 )
@@ -752,7 +752,7 @@ impl IndexBuilder {
         files: &[SearchResult],
         matcher: &RegexMatcher,
         multiline: bool,
-        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
+        indexed_texts: Option<Arc<IndexedTextStore>>,
     ) -> usize {
         files
             .par_iter()
@@ -765,7 +765,7 @@ impl IndexBuilder {
                             .and_then(|texts| texts.get(candidate.file_path.as_path()))
                             .and_then(|content| {
                                 regex_search::content_has_regex_match_with_searcher(
-                                    content.as_ref(),
+                                    content,
                                     matcher,
                                     searcher,
                                 )
@@ -972,7 +972,7 @@ impl IndexBuilder {
         collect_matches: bool,
         before_context: usize,
         after_context: usize,
-        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
+        indexed_texts: Option<Arc<IndexedTextStore>>,
     ) -> Vec<Option<RegexSearchResult>> {
         if candidates.len() < REGEX_VERIFY_PARALLEL_THRESHOLD {
             let mut searcher = regex_search::build_regex_searcher_with_context(
@@ -989,7 +989,7 @@ impl IndexBuilder {
                     indexed_text
                         .and_then(|content| {
                             regex_search::apply_regex_to_content_with_context_with_searcher(
-                                content.as_ref(),
+                                content,
                                 matcher,
                                 &mut searcher,
                             )
@@ -1011,7 +1011,7 @@ impl IndexBuilder {
                     indexed_text
                         .and_then(|content| {
                             regex_search::content_has_regex_match_with_searcher(
-                                content.as_ref(),
+                                content,
                                 matcher,
                                 &mut searcher,
                             )
@@ -1053,7 +1053,7 @@ impl IndexBuilder {
                         indexed_text
                             .and_then(|content| {
                                 regex_search::apply_regex_to_content_with_context_with_searcher(
-                                    content.as_ref(),
+                                    content,
                                     matcher,
                                     searcher,
                                 )
@@ -1075,7 +1075,7 @@ impl IndexBuilder {
                         indexed_text
                             .and_then(|content| {
                                 regex_search::content_has_regex_match_with_searcher(
-                                    content.as_ref(),
+                                    content,
                                     matcher,
                                     searcher,
                                 )

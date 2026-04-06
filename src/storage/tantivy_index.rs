@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -40,7 +41,114 @@ struct ContentManifest {
 #[derive(Serialize, Deserialize)]
 struct ContentEntry {
     path: PathBuf,
-    content: String,
+    offset: u64,
+    len: u64,
+}
+
+#[derive(Clone, Copy)]
+struct ContentSpan {
+    offset: usize,
+    len: usize,
+}
+
+enum ContentBlob {
+    Mmap(Mmap),
+    Bytes(Box<[u8]>),
+}
+
+impl ContentBlob {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Mmap(mmap) => mmap,
+            Self::Bytes(bytes) => bytes,
+        }
+    }
+}
+
+pub struct IndexedTextStore {
+    spans: HashMap<PathBuf, ContentSpan>,
+    blob: ContentBlob,
+}
+
+impl IndexedTextStore {
+    fn from_owned_map(contents: HashMap<PathBuf, String>) -> Self {
+        let mut ordered: Vec<_> = contents.into_iter().collect();
+        ordered.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+        let total_bytes: usize = ordered.iter().map(|(_, content)| content.len()).sum();
+        let mut blob = Vec::with_capacity(total_bytes);
+        let mut spans = HashMap::with_capacity(ordered.len());
+
+        for (path, content) in ordered {
+            let offset = blob.len();
+            blob.extend_from_slice(content.as_bytes());
+            spans.insert(
+                path,
+                ContentSpan {
+                    offset,
+                    len: content.len(),
+                },
+            );
+        }
+
+        Self {
+            spans,
+            blob: ContentBlob::Bytes(blob.into_boxed_slice()),
+        }
+    }
+
+    fn from_manifest(index_dir: &Path, manifest: ContentManifest) -> Result<Option<Self>> {
+        if manifest.version != CONTENT_MANIFEST_VERSION {
+            return Ok(None);
+        }
+
+        let blob_path = content_blob_path(index_dir);
+        if !blob_path.exists() {
+            return Ok(None);
+        }
+
+        let blob = std::fs::File::open(&blob_path)
+            .ok()
+            .and_then(|file| unsafe { Mmap::map(&file).ok() })
+            .map(ContentBlob::Mmap)
+            .unwrap_or_else(|| {
+                ContentBlob::Bytes(
+                    std::fs::read(&blob_path)
+                        .unwrap_or_default()
+                        .into_boxed_slice(),
+                )
+            });
+
+        let blob_len = blob.as_slice().len();
+        let mut spans = HashMap::with_capacity(manifest.entries.len());
+        for entry in manifest.entries {
+            let Ok(offset) = usize::try_from(entry.offset) else {
+                return Ok(None);
+            };
+            let Ok(len) = usize::try_from(entry.len) else {
+                return Ok(None);
+            };
+            if offset.checked_add(len).is_none_or(|end| end > blob_len) {
+                return Ok(None);
+            }
+            spans.insert(entry.path, ContentSpan { offset, len });
+        }
+
+        Ok(Some(Self { spans, blob }))
+    }
+
+    pub fn get(&self, file_path: &Path) -> Option<&str> {
+        let span = self.spans.get(file_path)?;
+        let end = span.offset + span.len;
+        std::str::from_utf8(&self.blob.as_slice()[span.offset..end]).ok()
+    }
+
+    fn to_owned_map(&self) -> HashMap<PathBuf, String> {
+        self.spans
+            .keys()
+            .filter_map(|path| self.get(path).map(|content| (path.clone(), content.to_owned())))
+            .collect()
+    }
 }
 
 struct SymbolHeapEntry {
@@ -123,7 +231,7 @@ pub struct TantivyIndex {
     writer_heap_bytes: usize,
     file_list_cache: RwLock<Option<Arc<[SearchResult]>>>,
     pending_file_list_deltas: HashMap<PathBuf, bool>,
-    content_cache: RwLock<Option<Arc<HashMap<PathBuf, Arc<str>>>>>,
+    content_cache: RwLock<Option<Arc<IndexedTextStore>>>,
     pending_content_deltas: HashMap<PathBuf, Option<String>>,
 }
 
@@ -134,13 +242,18 @@ const COLLIE_QNAME_PARTS: &str = "collie_qname_parts";
 const FILE_LIST_MANIFEST: &str = "file-list.bin";
 const FILE_LIST_MANIFEST_VERSION: u8 = 1;
 const CONTENT_MANIFEST: &str = "contents.bin";
-const CONTENT_MANIFEST_VERSION: u8 = 1;
+const CONTENT_MANIFEST_VERSION: u8 = 2;
+const CONTENT_BLOB: &str = "contents.dat";
 
 fn content_manifest_path(index_dir: &Path) -> PathBuf {
     index_dir
         .parent()
         .unwrap_or(index_dir)
         .join(CONTENT_MANIFEST)
+}
+
+fn content_blob_path(index_dir: &Path) -> PathBuf {
+    index_dir.parent().unwrap_or(index_dir).join(CONTENT_BLOB)
 }
 
 fn legacy_content_manifest_path(index_dir: &Path) -> PathBuf {
@@ -628,21 +741,23 @@ impl TantivyIndex {
     }
 
     pub fn indexed_text(&self, file_path: &Path) -> Option<Arc<str>> {
-        self.indexed_texts_shared().get(file_path).cloned()
+        self.indexed_text_store_shared()
+            .get(file_path)
+            .map(Arc::<str>::from)
     }
 
-    pub fn indexed_texts_shared(&self) -> Arc<HashMap<PathBuf, Arc<str>>> {
+    pub fn indexed_text_store_shared(&self) -> Arc<IndexedTextStore> {
         if let Ok(cache) = self.content_cache.read() {
             if let Some(cached) = cache.as_ref() {
                 return Arc::clone(cached);
             }
         }
 
-        let contents = Self::load_content_manifest(&self.index_dir)
+        let contents = Self::load_content_store(&self.index_dir)
             .ok()
             .flatten()
             .map(Arc::new)
-            .unwrap_or_else(|| Arc::new(HashMap::new()));
+            .unwrap_or_else(|| Arc::new(IndexedTextStore::from_owned_map(HashMap::new())));
         if let Ok(mut cache) = self.content_cache.write() {
             *cache = Some(Arc::clone(&contents));
         }
@@ -1192,69 +1307,115 @@ impl TantivyIndex {
         Ok(())
     }
 
-    fn load_content_manifest(index_dir: &Path) -> Result<Option<HashMap<PathBuf, Arc<str>>>> {
+    fn load_content_store(index_dir: &Path) -> Result<Option<IndexedTextStore>> {
         let manifest_path = content_manifest_path(index_dir);
+        let blob_path = content_blob_path(index_dir);
+        if manifest_path.exists() && blob_path.exists() {
+            let bytes = std::fs::read(&manifest_path)
+                .with_context(|| format!("failed to read content manifest {:?}", manifest_path))?;
+            let manifest: ContentManifest = bincode::deserialize(&bytes)
+                .with_context(|| format!("failed to decode content manifest {:?}", manifest_path))?;
+            if let Some(store) = IndexedTextStore::from_manifest(index_dir, manifest)? {
+                return Ok(Some(store));
+            }
+        }
+
         if !manifest_path.exists() {
             let legacy_path = legacy_content_manifest_path(index_dir);
             if !legacy_path.exists() {
                 return Ok(None);
             }
-            return Self::load_content_manifest_from_path(&legacy_path);
+            return Self::load_legacy_content_store(&legacy_path);
         }
 
-        Self::load_content_manifest_from_path(&manifest_path)
+        Ok(None)
     }
 
-    fn load_content_manifest_from_path(
+    fn load_legacy_content_store(
         manifest_path: &Path,
-    ) -> Result<Option<HashMap<PathBuf, Arc<str>>>> {
-        let bytes = std::fs::read(manifest_path)
-            .with_context(|| format!("failed to read content manifest {:?}", manifest_path))?;
-        let manifest: ContentManifest = bincode::deserialize(&bytes)
-            .with_context(|| format!("failed to decode content manifest {:?}", manifest_path))?;
-        if manifest.version != CONTENT_MANIFEST_VERSION {
+    ) -> Result<Option<IndexedTextStore>> {
+        #[derive(Deserialize)]
+        struct LegacyContentEntry {
+            path: PathBuf,
+            content: String,
+        }
+        #[derive(Deserialize)]
+        struct LegacyContentManifest {
+            version: u8,
+            entries: Vec<LegacyContentEntry>,
+        }
+        let legacy_bytes = std::fs::read(manifest_path).with_context(|| {
+            format!(
+                "failed to read legacy content manifest {:?}",
+                manifest_path
+            )
+        })?;
+        let legacy: LegacyContentManifest = bincode::deserialize(&legacy_bytes).with_context(|| {
+            format!(
+                "failed to decode legacy content manifest {:?}",
+                manifest_path
+            )
+        })?;
+        if legacy.version == CONTENT_MANIFEST_VERSION {
             return Ok(None);
         }
-
-        Ok(Some(
-            manifest
+        Ok(Some(IndexedTextStore::from_owned_map(
+            legacy
                 .entries
                 .into_iter()
-                .map(|entry| (entry.path, Arc::<str>::from(entry.content)))
+                .map(|entry| (entry.path, entry.content))
                 .collect(),
-        ))
+        )))
     }
 
-    fn write_content_manifest(&self, entries: &HashMap<PathBuf, Arc<str>>) -> Result<()> {
+    fn write_content_store(&self, contents: &HashMap<PathBuf, String>) -> Result<IndexedTextStore> {
         let manifest_path = content_manifest_path(&self.index_dir);
-        let tmp_path = manifest_path.with_extension("bin.tmp");
-        let mut ordered: Vec<_> = entries
-            .iter()
-            .map(|(path, content)| ContentEntry {
-                path: path.clone(),
-                content: content.to_string(),
-            })
-            .collect();
-        ordered.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        let blob_path = content_blob_path(&self.index_dir);
+        let tmp_manifest_path = manifest_path.with_extension("bin.tmp");
+        let tmp_blob_path = blob_path.with_extension("dat.tmp");
+
+        let mut ordered: Vec<_> = contents.iter().collect();
+        ordered.sort_unstable_by(|a, b| a.0.cmp(b.0));
+
+        let mut blob = Vec::new();
+        let mut entries = Vec::with_capacity(ordered.len());
+        for (path, content) in ordered {
+            let offset = blob.len() as u64;
+            blob.extend_from_slice(content.as_bytes());
+            entries.push(ContentEntry {
+                path: (*path).clone(),
+                offset,
+                len: content.len() as u64,
+            });
+        }
 
         let manifest = ContentManifest {
             version: CONTENT_MANIFEST_VERSION,
-            entries: ordered,
+            entries,
         };
         let encoded = bincode::serialize(&manifest).context("failed to encode content manifest")?;
-        std::fs::write(&tmp_path, encoded)
-            .with_context(|| format!("failed to write content manifest {:?}", tmp_path))?;
-        std::fs::rename(&tmp_path, &manifest_path).with_context(|| {
+        std::fs::write(&tmp_manifest_path, encoded)
+            .with_context(|| format!("failed to write content manifest {:?}", tmp_manifest_path))?;
+        std::fs::write(&tmp_blob_path, &blob)
+            .with_context(|| format!("failed to write content blob {:?}", tmp_blob_path))?;
+        std::fs::rename(&tmp_manifest_path, &manifest_path).with_context(|| {
             format!(
                 "failed to move content manifest from {:?} to {:?}",
-                tmp_path, manifest_path
+                tmp_manifest_path, manifest_path
+            )
+        })?;
+        std::fs::rename(&tmp_blob_path, &blob_path).with_context(|| {
+            format!(
+                "failed to move content blob from {:?} to {:?}",
+                tmp_blob_path, blob_path
             )
         })?;
         let legacy_path = legacy_content_manifest_path(&self.index_dir);
         if legacy_path != manifest_path {
             let _ = std::fs::remove_file(legacy_path);
         }
-        Ok(())
+        IndexedTextStore::from_manifest(&self.index_dir, manifest)?
+            .context("failed to reopen written content store")
     }
 
     fn refresh_file_list_cache_after_commit(&mut self) -> Result<()> {
@@ -1317,36 +1478,32 @@ impl TantivyIndex {
             return Ok(());
         }
 
-        let mut contents: HashMap<PathBuf, Arc<str>> = if let Ok(cache) = self.content_cache.read()
-        {
+        let mut contents: HashMap<PathBuf, String> = if let Ok(cache) = self.content_cache.read() {
             cache
                 .as_ref()
-                .map(|cached| {
-                    cached
-                        .iter()
-                        .map(|(path, content)| (path.clone(), Arc::clone(content)))
-                        .collect()
-                })
+                .map(|cached| cached.to_owned_map())
                 .unwrap_or_default()
         } else {
             HashMap::new()
         };
 
         if contents.is_empty() {
-            contents = Self::load_content_manifest(&self.index_dir)?.unwrap_or_default();
+            contents = Self::load_content_store(&self.index_dir)?
+                .map(|store| store.to_owned_map())
+                .unwrap_or_default();
         }
 
         for (path, content) in self.pending_content_deltas.drain() {
             if let Some(content) = content {
-                contents.insert(path, Arc::<str>::from(content));
+                contents.insert(path, content);
             } else {
                 contents.remove(&path);
             }
         }
 
-        self.write_content_manifest(&contents)?;
+        let store = self.write_content_store(&contents)?;
         if let Ok(mut cache) = self.content_cache.write() {
-            *cache = Some(Arc::new(contents));
+            *cache = Some(Arc::new(store));
         }
         Ok(())
     }
