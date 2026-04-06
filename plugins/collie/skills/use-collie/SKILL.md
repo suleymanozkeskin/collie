@@ -257,6 +257,63 @@ collie search handler --path /path/to/repo --format json
 collie status . --json 2>/dev/null | jq -r '.status'
 ```
 
+## MCP Server
+
+Collie can run as an MCP (Model Context Protocol) server over stdio, exposing its
+search capabilities as tools for AI agents, editors, and IDE extensions.
+
+```sh
+collie mcp-serve --path /path/to/repo
+```
+
+This starts a JSON-RPC server on stdin/stdout with three tools:
+
+| Tool | Description |
+|------|-------------|
+| `collie_search` | Token search (same as `collie search`) |
+| `collie_search_regex` | Regex search (same as `collie search -e`) |
+| `collie_search_symbols` | Symbol search (same as `collie search 'kind:...'`) |
+
+All tools return JSON with the same schema as `--format json` output. Parameters
+match CLI flags: `pattern`/`query`, `limit`, `glob`, `ignore_case`, `multiline`,
+`symbol_regex`.
+
+### Editor/agent configuration
+
+Claude Code (`settings.json`):
+```json
+{
+  "mcpServers": {
+    "collie": {
+      "command": "collie",
+      "args": ["mcp-serve", "--path", "/path/to/repo"]
+    }
+  }
+}
+```
+
+VS Code (MCP settings):
+```json
+{
+  "mcp": {
+    "servers": {
+      "collie": {
+        "command": "collie",
+        "args": ["mcp-serve", "--path", "${workspaceFolder}"]
+      }
+    }
+  }
+}
+```
+
+### Error codes
+
+| Code | Meaning |
+|------|---------|
+| -32602 | Invalid params (bad regex, bad glob, missing symbol filters) |
+| -32002 | Resource not found (no index — run `collie watch .` first) |
+| -32603 | Internal error (server fault) |
+
 ## Notes
 
 - The daemon must be running (`collie watch .`) for the index to stay current.
