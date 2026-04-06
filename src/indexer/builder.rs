@@ -37,6 +37,9 @@ const REGEX_CANDIDATE_MIN_BUDGET: usize = 100;
 const REGEX_CANDIDATE_OVERSAMPLE: usize = 4;
 const REGEX_VERIFY_PARALLEL_THRESHOLD: usize = 8;
 const REGEX_VERIFY_CHUNK_CAP: usize = 64;
+// With a persisted file-list manifest, exhaustive full-scan setup is cheaper
+// than it used to be, so broad candidate sets should bypass narrowing sooner.
+const REGEX_EXHAUSTIVE_BROAD_PERCENT: usize = 15;
 
 enum ExhaustiveRegexCandidates {
     Shared(Arc<[SearchResult]>),
@@ -508,7 +511,9 @@ impl IndexBuilder {
             }
         }
 
-        if total_files > 0 && candidates.len() * 100 >= total_files * 25 {
+        if total_files > 0
+            && candidates.len() * 100 >= total_files * REGEX_EXHAUSTIVE_BROAD_PERCENT
+        {
             return ExhaustiveRegexCandidates::Shared(self.tantivy.list_all_files_shared());
         }
 
@@ -591,7 +596,8 @@ impl IndexBuilder {
             return true;
         }
 
-        let broad_threshold = total_files.saturating_mul(25) / 100;
+        let broad_threshold =
+            total_files.saturating_mul(REGEX_EXHAUSTIVE_BROAD_PERCENT) / 100;
         let broad_threshold = broad_threshold.max(1);
 
         // If any exact phrase candidate is selective, narrowing is worth it.

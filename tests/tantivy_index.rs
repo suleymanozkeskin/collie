@@ -274,3 +274,56 @@ fn list_all_files_cache_invalidates_after_commit() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn list_all_files_survives_reopen_without_tantivy_materialization() -> Result<()> {
+    let temp = TempDir::new()?;
+    let index_dir = temp.path().join("tantivy");
+
+    {
+        let mut index = TantivyIndex::open(&index_dir)?;
+        index.index_file_content("/a.rs".as_ref(), "alpha")?;
+        index.index_file_content("/b.rs".as_ref(), "beta")?;
+        index.commit()?;
+    }
+
+    let index = TantivyIndex::open(&index_dir)?;
+    let results = index.list_all_files();
+    let paths = result_paths(&results);
+    assert_eq!(
+        paths,
+        BTreeSet::from([PathBuf::from("/a.rs"), PathBuf::from("/b.rs")])
+    );
+    assert_eq!(index.file_count(), 2);
+    Ok(())
+}
+
+#[test]
+fn list_all_files_tracks_incremental_add_and_remove_after_reopen() -> Result<()> {
+    let temp = TempDir::new()?;
+    let index_dir = temp.path().join("tantivy");
+
+    {
+        let mut index = TantivyIndex::open(&index_dir)?;
+        index.index_file_content("/a.rs".as_ref(), "alpha")?;
+        index.index_file_content("/b.rs".as_ref(), "beta")?;
+        index.commit()?;
+    }
+
+    {
+        let mut index = TantivyIndex::open(&index_dir)?;
+        index.remove_by_path("/a.rs".as_ref())?;
+        index.index_file_content("/c.rs".as_ref(), "gamma")?;
+        index.commit()?;
+    }
+
+    let index = TantivyIndex::open(&index_dir)?;
+    let results = index.list_all_files();
+    let paths = result_paths(&results);
+    assert_eq!(
+        paths,
+        BTreeSet::from([PathBuf::from("/b.rs"), PathBuf::from("/c.rs")])
+    );
+    assert_eq!(index.file_count(), 2);
+    Ok(())
+}

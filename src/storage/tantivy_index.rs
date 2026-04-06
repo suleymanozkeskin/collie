@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use tantivy::collector::{DocSetCollector, TopDocs};
@@ -21,6 +23,12 @@ use crate::symbols::{Symbol, SymbolKind, SymbolQuery, SymbolResult};
 #[derive(Clone, Debug)]
 pub struct SearchResult {
     pub file_path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileListManifest {
+    version: u8,
+    paths: Vec<PathBuf>,
 }
 
 struct SymbolHeapEntry {
@@ -95,18 +103,22 @@ struct TantivySchema {
 
 pub struct TantivyIndex {
     index: Index,
+    index_dir: PathBuf,
     reader: IndexReader,
     writer: Option<IndexWriter>,
     schema: TantivySchema,
     no_merge: bool,
     writer_heap_bytes: usize,
     file_list_cache: RwLock<Option<Arc<[SearchResult]>>>,
+    pending_file_list_deltas: HashMap<PathBuf, bool>,
 }
 
 const COLLIE_BODY: &str = "collie_body";
 const COLLIE_BODY_REVERSED: &str = "collie_body_reversed";
 const COLLIE_IDENT_PARTS: &str = "collie_ident_parts";
 const COLLIE_QNAME_PARTS: &str = "collie_qname_parts";
+const FILE_LIST_MANIFEST: &str = "file-list.bin";
+const FILE_LIST_MANIFEST_VERSION: u8 = 1;
 
 fn build_schema() -> Schema {
     let mut builder = Schema::builder();
@@ -250,12 +262,14 @@ impl TantivyIndex {
 
         Ok(Self {
             index,
+            index_dir: index_dir.to_path_buf(),
             reader,
             writer: None,
             schema: fields,
             no_merge: false,
             writer_heap_bytes: 15_000_000,
             file_list_cache: RwLock::new(None),
+            pending_file_list_deltas: HashMap::new(),
         })
     }
 
@@ -333,6 +347,7 @@ impl TantivyIndex {
         let writer = self.writer.as_mut().unwrap();
         let term = Term::from_field_text(file_path_field, &file_path_str);
         writer.delete_term(term);
+        self.note_file_list_delta(file_path, false);
         Ok(())
     }
 
@@ -354,6 +369,7 @@ impl TantivyIndex {
             body_reversed_field => content,
         ))?;
 
+        self.note_file_list_delta(file_path, true);
         Ok(())
     }
 
@@ -378,6 +394,7 @@ impl TantivyIndex {
         doc.add_pre_tokenized_text(self.schema.body_reversed, body_reversed_tokens);
         writer.add_document(doc)?;
 
+        self.note_file_list_delta(file_path, true);
         Ok(())
     }
 
@@ -572,7 +589,7 @@ impl TantivyIndex {
         self.reader
             .reload()
             .context("tantivy reader reload failed")?;
-        self.invalidate_file_list_cache();
+        self.refresh_file_list_cache_after_commit()?;
         Ok(())
     }
 
@@ -667,11 +684,17 @@ impl TantivyIndex {
             }
         }
 
-        let query = TermQuery::new(
-            Term::from_field_text(self.schema.doc_type, "file"),
-            IndexRecordOption::Basic,
-        );
-        let results: Arc<[SearchResult]> = self.execute_file_query(&query).into();
+        let results: Arc<[SearchResult]> = Self::load_file_list_manifest(&self.index_dir)
+            .ok()
+            .flatten()
+            .map(Arc::<[SearchResult]>::from)
+            .unwrap_or_else(|| {
+                let query = TermQuery::new(
+                    Term::from_field_text(self.schema.doc_type, "file"),
+                    IndexRecordOption::Basic,
+                );
+                self.execute_file_query(&query).into()
+            });
         if let Ok(mut cache) = self.file_list_cache.write() {
             *cache = Some(Arc::clone(&results));
         }
@@ -1049,6 +1072,111 @@ impl TantivyIndex {
         if let Ok(mut cache) = self.file_list_cache.write() {
             *cache = None;
         }
+    }
+
+    fn note_file_list_delta(&mut self, file_path: &Path, present: bool) {
+        self.pending_file_list_deltas
+            .insert(file_path.to_path_buf(), present);
+    }
+
+    fn load_file_list_manifest(index_dir: &Path) -> Result<Option<Vec<SearchResult>>> {
+        let manifest_path = index_dir.join(FILE_LIST_MANIFEST);
+        if !manifest_path.exists() {
+            return Ok(None);
+        }
+
+        let bytes = std::fs::read(&manifest_path)
+            .with_context(|| format!("failed to read file list manifest {:?}", manifest_path))?;
+        let manifest: FileListManifest = bincode::deserialize(&bytes)
+            .with_context(|| format!("failed to decode file list manifest {:?}", manifest_path))?;
+        if manifest.version != FILE_LIST_MANIFEST_VERSION {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            manifest
+                .paths
+                .into_iter()
+                .map(|file_path| SearchResult { file_path })
+                .collect(),
+        ))
+    }
+
+    fn write_file_list_manifest(&self, entries: &[SearchResult]) -> Result<()> {
+        let manifest_path = self.index_dir.join(FILE_LIST_MANIFEST);
+        let tmp_path = self.index_dir.join(format!("{}.tmp", FILE_LIST_MANIFEST));
+        let manifest = FileListManifest {
+            version: FILE_LIST_MANIFEST_VERSION,
+            paths: entries
+                .iter()
+                .map(|entry| entry.file_path.clone())
+                .collect(),
+        };
+        let encoded =
+            bincode::serialize(&manifest).context("failed to encode file list manifest")?;
+        std::fs::write(&tmp_path, encoded)
+            .with_context(|| format!("failed to write file list manifest {:?}", tmp_path))?;
+        std::fs::rename(&tmp_path, &manifest_path).with_context(|| {
+            format!(
+                "failed to move file list manifest from {:?} to {:?}",
+                tmp_path, manifest_path
+            )
+        })?;
+        Ok(())
+    }
+
+    fn refresh_file_list_cache_after_commit(&mut self) -> Result<()> {
+        if self.pending_file_list_deltas.is_empty() {
+            self.invalidate_file_list_cache();
+            return Ok(());
+        }
+
+        let mut files: Vec<SearchResult> = if let Ok(cache) = self.file_list_cache.read() {
+            cache
+                .as_ref()
+                .map(|cached| cached.to_vec())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        if files.is_empty() {
+            files = Self::load_file_list_manifest(&self.index_dir)?.unwrap_or_else(|| {
+                let query = TermQuery::new(
+                    Term::from_field_text(self.schema.doc_type, "file"),
+                    IndexRecordOption::Basic,
+                );
+                self.execute_file_query(&query)
+            });
+        }
+
+        let mut positions: HashMap<PathBuf, usize> = files
+            .iter()
+            .enumerate()
+            .map(|(idx, result)| (result.file_path.clone(), idx))
+            .collect();
+
+        for (path, present) in self.pending_file_list_deltas.drain() {
+            if present {
+                if !positions.contains_key(&path) {
+                    positions.insert(path.clone(), files.len());
+                    files.push(SearchResult { file_path: path });
+                }
+            } else if let Some(idx) = positions.remove(&path) {
+                files.swap_remove(idx);
+                if idx < files.len() {
+                    positions.insert(files[idx].file_path.clone(), idx);
+                }
+            }
+        }
+
+        files.sort_unstable_by(|a, b| a.file_path.cmp(&b.file_path));
+        let shared: Arc<[SearchResult]> = files.into();
+        self.write_file_list_manifest(&shared)?;
+        if let Ok(mut cache) = self.file_list_cache.write() {
+            *cache = Some(Arc::clone(&shared));
+        }
+        Ok(())
     }
 
     fn build_phrase_query(&self, terms: &[(usize, String)]) -> Option<PhraseQuery> {
