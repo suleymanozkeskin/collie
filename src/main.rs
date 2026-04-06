@@ -244,6 +244,20 @@ enum Commands {
     /// Print the agent skill reference (search modes, JSON schema, workflows)
     Skill,
 
+    /// Start an MCP (Model Context Protocol) server over stdio
+    ///
+    /// Exposes Collie's search capabilities as MCP tools for AI agents
+    /// and editors. The server communicates via JSON-RPC over stdin/stdout.
+    ///
+    /// Configure in your editor/agent:
+    ///   { "command": "collie", "args": ["mcp-serve"] }
+    #[command(name = "mcp-serve")]
+    McpServe {
+        /// Repository path
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
+
     #[command(name = "__daemon", hide = true)]
     InternalDaemon { path: PathBuf },
 }
@@ -354,6 +368,9 @@ fn run() -> anyhow::Result<i32> {
         }
         (Some(Commands::Skill), _) => {
             print!("{}", include_str!("../.agents/skills/SKILL.md"));
+        }
+        (Some(Commands::McpServe { path }), _) => {
+            collie_search::cli::mcp_serve::run(path)?;
         }
         (Some(Commands::InternalDaemon { path }), _) => {
             collie_search::daemon::run_internal_daemon(path)?;

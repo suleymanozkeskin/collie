@@ -1025,7 +1025,7 @@ fn extract_snippets(
 
 // --- Path resolution ---
 
-fn find_index_path(worktree_root: &Path) -> Result<PathBuf> {
+pub fn find_index_path(worktree_root: &Path) -> Result<PathBuf> {
     let candidate = crate::paths::repo_state_dir(worktree_root)?;
     crate::paths::migrate_legacy_runtime(worktree_root, &candidate)?;
 
@@ -1049,7 +1049,7 @@ fn find_index_path(worktree_root: &Path) -> Result<PathBuf> {
     anyhow::bail!("No index found. Run 'collie watch .' from the worktree root first.");
 }
 
-fn find_worktree_root(start: &PathBuf) -> Result<PathBuf> {
+pub fn find_worktree_root(start: &PathBuf) -> Result<PathBuf> {
     let mut current = start.clone();
 
     loop {
