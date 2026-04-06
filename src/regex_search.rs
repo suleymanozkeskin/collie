@@ -2,7 +2,7 @@ use std::io;
 use std::path::Path;
 
 use grep_regex::RegexMatcher;
-use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
+use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch};
 use regex::Regex;
 use regex_syntax::hir::literal::{ExtractKind, Extractor, Seq};
 
@@ -33,6 +33,30 @@ pub struct RegexFileMatch {
     pub line_number: usize,
     /// Content of the matched line.
     pub line_content: String,
+}
+
+/// A single snippet line produced during regex verification.
+#[derive(Debug, Clone)]
+pub struct RegexSnippetLine {
+    /// 1-based line number.
+    pub line_number: usize,
+    /// Content of the line.
+    pub line_content: String,
+    /// Whether this line contains a match.
+    pub is_match: bool,
+}
+
+/// A contiguous snippet window produced during regex verification.
+#[derive(Debug, Clone, Default)]
+pub struct RegexSnippet {
+    pub lines: Vec<RegexSnippetLine>,
+}
+
+/// Match lines plus snippet-ready context captured in a single grep pass.
+#[derive(Debug, Default)]
+pub struct RegexMatchCapture {
+    pub matches: Vec<RegexFileMatch>,
+    pub snippets: Vec<RegexSnippet>,
 }
 
 /// Extract a `CandidateQuery` from a regex pattern string.
@@ -259,11 +283,23 @@ pub fn apply_regex_to_file_searcher(
 
 /// Build a reusable grep-style searcher for exhaustive regex verification.
 pub fn build_regex_searcher(multiline: bool) -> Searcher {
-    SearcherBuilder::new()
+    build_regex_searcher_with_context(multiline, 0, 0)
+}
+
+/// Build a reusable grep-style searcher with explicit before/after context.
+pub fn build_regex_searcher_with_context(
+    multiline: bool,
+    before_context: usize,
+    after_context: usize,
+) -> Searcher {
+    let mut builder = SearcherBuilder::new();
+    builder
         .line_number(true)
         .multi_line(multiline)
-        .binary_detection(BinaryDetection::none())
-        .build()
+        .before_context(before_context)
+        .after_context(after_context)
+        .binary_detection(BinaryDetection::none());
+    builder.build()
 }
 
 /// Apply a grep-style regex matcher using a caller-provided reusable searcher.
@@ -275,6 +311,18 @@ pub fn apply_regex_to_file_with_searcher(
     let mut sink = RegexSink::default();
     searcher.search_path(matcher, file_path, &mut sink).ok()?;
     Some(sink.matches)
+}
+
+/// Apply a grep-style matcher and capture snippet-ready context lines in the
+/// same file pass used for regex verification.
+pub fn apply_regex_to_file_with_context_with_searcher(
+    file_path: &Path,
+    matcher: &RegexMatcher,
+    searcher: &mut Searcher,
+) -> Option<RegexMatchCapture> {
+    let mut sink = RegexContextSink::default();
+    searcher.search_path(matcher, file_path, &mut sink).ok()?;
+    Some(sink.finish())
 }
 
 /// Return whether a grep-style matcher matched a file using a reusable searcher.
@@ -319,6 +367,14 @@ struct RegexPresenceSink {
     found: bool,
 }
 
+#[derive(Default)]
+struct RegexContextSink {
+    matches: Vec<RegexFileMatch>,
+    snippets: Vec<RegexSnippet>,
+    current_snippet: Option<RegexSnippet>,
+    seen_match_lines: std::collections::BTreeSet<usize>,
+}
+
 impl Sink for RegexSink {
     type Error = io::Error;
 
@@ -343,5 +399,94 @@ impl Sink for RegexPresenceSink {
     fn matched(&mut self, _searcher: &Searcher, _mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         self.found = true;
         Ok(false)
+    }
+}
+
+impl RegexContextSink {
+    fn finish(mut self) -> RegexMatchCapture {
+        self.flush_snippet();
+        RegexMatchCapture {
+            matches: self.matches,
+            snippets: self.snippets,
+        }
+    }
+
+    fn flush_snippet(&mut self) {
+        if let Some(snippet) = self.current_snippet.take() {
+            if !snippet.lines.is_empty() {
+                self.snippets.push(snippet);
+            }
+        }
+    }
+
+    fn push_line(&mut self, line_number: usize, line_content: String, is_match: bool) {
+        if let Some(current) = self.current_snippet.as_ref() {
+            if let Some(last) = current.lines.last() {
+                if line_number > last.line_number + 1 {
+                    self.flush_snippet();
+                }
+            }
+        }
+
+        let snippet = self
+            .current_snippet
+            .get_or_insert_with(RegexSnippet::default);
+        if let Some(existing) = snippet
+            .lines
+            .iter_mut()
+            .find(|line| line.line_number == line_number)
+        {
+            existing.is_match |= is_match;
+            return;
+        }
+
+        snippet.lines.push(RegexSnippetLine {
+            line_number,
+            line_content: line_content.clone(),
+            is_match,
+        });
+
+        if is_match && self.seen_match_lines.insert(line_number) {
+            self.matches.push(RegexFileMatch {
+                line_number,
+                line_content,
+            });
+        }
+    }
+}
+
+impl Sink for RegexContextSink {
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        let start_line = mat.line_number().unwrap_or(1) as usize;
+        for (offset, line) in mat.lines().enumerate() {
+            let line_number = start_line + offset;
+            self.push_line(
+                line_number,
+                String::from_utf8_lossy(trim_line_ending(line)).into_owned(),
+                true,
+            );
+        }
+        Ok(true)
+    }
+
+    fn context(
+        &mut self,
+        _searcher: &Searcher,
+        context: &SinkContext<'_>,
+    ) -> Result<bool, Self::Error> {
+        let line_number = context.line_number().unwrap_or(1) as usize;
+        self.push_line(
+            line_number,
+            String::from_utf8_lossy(trim_line_ending(context.bytes())).into_owned(),
+            false,
+        );
+        Ok(true)
+    }
+
+    fn context_break(&mut self, _searcher: &Searcher) -> Result<bool, Self::Error> {
+        self.flush_snippet();
+        Ok(true)
     }
 }

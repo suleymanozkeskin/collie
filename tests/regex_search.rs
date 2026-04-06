@@ -1,6 +1,7 @@
 use collie_search::regex_search::{
-    CandidateQuery, apply_regex_to_file, apply_regex_to_file_searcher, extract_candidate_query,
-    extract_exact_candidates,
+    CandidateQuery, apply_regex_to_file, apply_regex_to_file_searcher,
+    apply_regex_to_file_with_context_with_searcher, build_regex_searcher_with_context,
+    extract_candidate_query, extract_exact_candidates,
 };
 use std::io::Write;
 
@@ -185,4 +186,40 @@ fn apply_regex_searcher_multiline_spans_lines() {
     let matches = apply_regex_to_file_searcher(tmp.path(), &matcher, true).unwrap();
     assert!(matches.iter().any(|m| m.line_number == 2));
     assert!(matches.iter().any(|m| m.line_number == 3));
+}
+
+#[test]
+fn apply_regex_searcher_with_context_captures_surrounding_lines() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        tmp.as_file(),
+        "line one\nfn hello_world() {{}}\nline three\n"
+    )
+    .unwrap();
+    let matcher = grep_regex::RegexMatcherBuilder::new()
+        .multi_line(true)
+        .build("hello_world")
+        .unwrap();
+    let mut searcher = build_regex_searcher_with_context(false, 1, 1);
+
+    let capture =
+        apply_regex_to_file_with_context_with_searcher(tmp.path(), &matcher, &mut searcher)
+            .unwrap();
+
+    assert_eq!(capture.matches.len(), 1);
+    assert_eq!(capture.matches[0].line_number, 2);
+    assert_eq!(capture.snippets.len(), 1);
+    let snippet_lines: Vec<_> = capture.snippets[0]
+        .lines
+        .iter()
+        .map(|line| (line.line_number, line.line_content.as_str(), line.is_match))
+        .collect();
+    assert_eq!(
+        snippet_lines,
+        vec![
+            (1, "line one", false),
+            (2, "fn hello_world() {}", true),
+            (3, "line three", false),
+        ]
+    );
 }

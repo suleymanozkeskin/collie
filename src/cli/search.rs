@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -6,6 +7,7 @@ use serde::Serialize;
 
 use crate::config::CollieConfig;
 use crate::indexer::IndexBuilder;
+use crate::indexer::builder::RegexSearchResult;
 use crate::indexer::tokenizer::Tokenizer;
 use crate::storage::generation::GenerationManager;
 use crate::storage::tantivy_index::TantivyIndex;
@@ -373,9 +375,11 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                     println!("{}. {}", idx + 1, rel.display());
                 }
             } else {
+                let stdout = io::stdout();
+                let mut out = io::BufWriter::new(stdout.lock());
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
-                    println!();
+                    writeln!(out)?;
                     match extract_snippets(
                         &result.file_path,
                         opts.pattern,
@@ -383,16 +387,19 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                         opts.after_ctx,
                     ) {
                         SnippetResult::Found(snippets) => {
-                            print_snippets_default(&rel, &snippets, opts.color)
+                            write_snippets_default(&mut out, &rel, &snippets, opts.color)?
                         }
-                        SnippetResult::FileNotFound => {
-                            println!("{} (file not found, index may be stale)", rel.display())
-                        }
+                        SnippetResult::FileNotFound => writeln!(
+                            out,
+                            "{} (file not found, index may be stale)",
+                            rel.display()
+                        )?,
                         SnippetResult::NoMatches => {
-                            println!("{}", rel.display());
+                            writeln!(out, "{}", rel.display())?;
                         }
                     }
                 }
+                out.flush()?;
             }
         }
         OutputFormat::Plain => {
@@ -402,6 +409,8 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                     println!("{}", rel.display());
                 }
             } else {
+                let stdout = io::stdout();
+                let mut out = io::BufWriter::new(stdout.lock());
                 let mut first_group = true;
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
@@ -411,9 +420,16 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                         opts.before_ctx,
                         opts.after_ctx,
                     ) {
-                        print_snippets_plain(&rel, &snippets, &mut first_group, opts.color);
+                        write_snippets_plain(
+                            &mut out,
+                            &rel,
+                            &snippets,
+                            &mut first_group,
+                            opts.color,
+                        )?;
                     }
                 }
+                out.flush()?;
             }
         }
         OutputFormat::Json => unreachable!(), // handled above
@@ -435,6 +451,8 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
             opts.multiline,
             opts.ignore_case,
             false,
+            0,
+            0,
         )?;
         let results: Vec<_> = results
             .into_iter()
@@ -451,6 +469,8 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
         opts.multiline,
         opts.ignore_case,
         !opts.no_snippets,
+        opts.before_ctx,
+        opts.after_ctx,
     )?;
     let results: Vec<_> = results
         .into_iter()
@@ -530,25 +550,29 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                 results.len(),
                 opts.pattern
             );
+            let stdout = io::stdout();
+            let mut out = io::BufWriter::new(stdout.lock());
             for result in &results {
                 let rel = relative_path(&result.file_path, opts.worktree_root);
-                println!();
+                writeln!(out)?;
                 if opts.no_snippets {
-                    println!("{}", rel.display());
+                    writeln!(out, "{}", rel.display())?;
+                } else if !result.snippets.is_empty() {
+                    write_regex_snippets_default(&mut out, &rel, &result.snippets, opts.color)?;
                 } else {
-                    let match_lines: Vec<usize> =
-                        result.matches.iter().map(|m| m.line_number).collect();
-                    match build_context_snippets(
-                        &result.file_path,
-                        &match_lines,
-                        opts.before_ctx,
-                        opts.after_ctx,
-                    ) {
-                        Some(snippets) => print_snippets_default(&rel, &snippets, opts.color),
-                        None => println!("{} (file not found, index may be stale)", rel.display()),
+                    match build_regex_fallback_snippets(result, opts.before_ctx, opts.after_ctx) {
+                        Some(snippets) => {
+                            write_snippets_default(&mut out, &rel, &snippets, opts.color)?
+                        }
+                        None => writeln!(
+                            out,
+                            "{} (file not found, index may be stale)",
+                            rel.display()
+                        )?,
                     }
                 }
             }
+            out.flush()?;
         }
         OutputFormat::Plain => {
             if opts.no_snippets {
@@ -557,20 +581,32 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
                     println!("{}", rel.display());
                 }
             } else {
+                let stdout = io::stdout();
+                let mut out = io::BufWriter::new(stdout.lock());
                 let mut first_group = true;
                 for result in &results {
                     let rel = relative_path(&result.file_path, opts.worktree_root);
-                    let match_lines: Vec<usize> =
-                        result.matches.iter().map(|m| m.line_number).collect();
-                    if let Some(snippets) = build_context_snippets(
-                        &result.file_path,
-                        &match_lines,
-                        opts.before_ctx,
-                        opts.after_ctx,
-                    ) {
-                        print_snippets_plain(&rel, &snippets, &mut first_group, opts.color);
+                    if !result.snippets.is_empty() {
+                        write_regex_snippets_plain(
+                            &mut out,
+                            &rel,
+                            &result.snippets,
+                            &mut first_group,
+                            opts.color,
+                        )?;
+                    } else if let Some(snippets) =
+                        build_regex_fallback_snippets(result, opts.before_ctx, opts.after_ctx)
+                    {
+                        write_snippets_plain(
+                            &mut out,
+                            &rel,
+                            &snippets,
+                            &mut first_group,
+                            opts.color,
+                        )?;
                     }
                 }
+                out.flush()?;
             }
         }
         OutputFormat::Json => unreachable!(),
@@ -609,60 +645,70 @@ fn match_glob(path: &Path, opts: &SearchOpts) -> bool {
 
 // --- Output formatters ---
 
-fn print_snippets_default(relative: &Path, snippets: &[Snippet], color: bool) {
+fn write_snippets_default<W: Write>(
+    out: &mut W,
+    relative: &Path,
+    snippets: &[Snippet],
+    color: bool,
+) -> io::Result<()> {
     if color {
-        println!("{MAGENTA}{BOLD}{}{RESET}", relative.display());
+        writeln!(out, "{MAGENTA}{BOLD}{}{RESET}", relative.display())?;
     } else {
-        println!("{}", relative.display());
+        writeln!(out, "{}", relative.display())?;
     }
     for (si, snippet) in snippets.iter().enumerate() {
         if si > 0 {
-            println!("  ...");
+            writeln!(out, "  ...")?;
         }
         let max_line_num = snippet.lines.last().map(|(n, _, _)| *n).unwrap_or(1);
         let width = max_line_num.to_string().len();
         for (line_num, content, is_match) in &snippet.lines {
             if color && *is_match {
-                println!(
+                writeln!(
+                    out,
                     "  {GREEN}{:>width$}{RESET} | {}",
                     line_num,
                     content,
                     width = width
-                );
+                )?;
             } else {
-                println!("  {:>width$} | {}", line_num, content, width = width);
+                writeln!(out, "  {:>width$} | {}", line_num, content, width = width)?;
             }
         }
     }
+    Ok(())
 }
 
-fn print_snippets_plain(
+fn write_snippets_plain<W: Write>(
+    out: &mut W,
     relative: &Path,
     snippets: &[Snippet],
     first_group: &mut bool,
     color: bool,
-) {
+) -> io::Result<()> {
     let rel_str = relative.display().to_string();
     for snippet in snippets {
         if !*first_group {
-            println!("--");
+            writeln!(out, "--")?;
         }
         *first_group = false;
         for (line_num, content, is_match) in &snippet.lines {
             if *is_match {
                 if color {
-                    println!(
+                    writeln!(
+                        out,
                         "{MAGENTA}{}{RESET}:{GREEN}{}{RESET}:{}",
                         rel_str, line_num, content
-                    );
+                    )?;
                 } else {
-                    println!("{}:{}:{}", rel_str, line_num, content);
+                    writeln!(out, "{}:{}:{}", rel_str, line_num, content)?;
                 }
             } else {
-                println!("{}-{}-{}", rel_str, line_num, content);
+                writeln!(out, "{}-{}-{}", rel_str, line_num, content)?;
             }
         }
     }
+    Ok(())
 }
 
 fn print_symbol_results_json(pattern: &str, results: &[SymbolResult]) {
@@ -791,6 +837,99 @@ fn build_context_snippets(
     }
 
     Some(snippets)
+}
+
+fn build_regex_fallback_snippets(
+    result: &RegexSearchResult,
+    before_ctx: usize,
+    after_ctx: usize,
+) -> Option<Vec<Snippet>> {
+    let match_lines: Vec<usize> = result.matches.iter().map(|m| m.line_number).collect();
+    build_context_snippets(&result.file_path, &match_lines, before_ctx, after_ctx)
+}
+
+fn write_regex_snippets_default<W: Write>(
+    out: &mut W,
+    relative: &Path,
+    snippets: &[crate::regex_search::RegexSnippet],
+    color: bool,
+) -> io::Result<()> {
+    if color {
+        writeln!(out, "{MAGENTA}{BOLD}{}{RESET}", relative.display())?;
+    } else {
+        writeln!(out, "{}", relative.display())?;
+    }
+    for (si, snippet) in snippets.iter().enumerate() {
+        if si > 0 {
+            writeln!(out, "  ...")?;
+        }
+        let max_line_num = snippet
+            .lines
+            .last()
+            .map(|line| line.line_number)
+            .unwrap_or(1);
+        let width = max_line_num.to_string().len();
+        for line in &snippet.lines {
+            if color && line.is_match {
+                writeln!(
+                    out,
+                    "  {GREEN}{:>width$}{RESET} | {}",
+                    line.line_number,
+                    line.line_content,
+                    width = width
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "  {:>width$} | {}",
+                    line.line_number,
+                    line.line_content,
+                    width = width
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_regex_snippets_plain<W: Write>(
+    out: &mut W,
+    relative: &Path,
+    snippets: &[crate::regex_search::RegexSnippet],
+    first_group: &mut bool,
+    color: bool,
+) -> io::Result<()> {
+    let rel_str = relative.display().to_string();
+    for snippet in snippets {
+        if !*first_group {
+            writeln!(out, "--")?;
+        }
+        *first_group = false;
+        for line in &snippet.lines {
+            if line.is_match {
+                if color {
+                    writeln!(
+                        out,
+                        "{MAGENTA}{}{RESET}:{GREEN}{}{RESET}:{}",
+                        rel_str, line.line_number, line.line_content
+                    )?;
+                } else {
+                    writeln!(
+                        out,
+                        "{}:{}:{}",
+                        rel_str, line.line_number, line.line_content
+                    )?;
+                }
+            } else {
+                writeln!(
+                    out,
+                    "{}-{}-{}",
+                    rel_str, line.line_number, line.line_content
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Find byte-offset positions of tokens matching the query pattern in content.

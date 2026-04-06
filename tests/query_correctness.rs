@@ -408,7 +408,7 @@ fn regex_ranked_search_respects_limit() -> Result<()> {
     }
     builder.save()?;
 
-    let results = builder.search_regex("hello_.*", 2, false, false, false)?;
+    let results = builder.search_regex("hello_.*", 2, false, false, false, 0, 0)?;
     assert_eq!(results.len(), 2);
     Ok(())
 }
@@ -422,9 +422,10 @@ fn regex_ranked_search_with_matches_respects_limit() -> Result<()> {
     }
     builder.save()?;
 
-    let results = builder.search_regex("hello_.*", 2, false, false, true)?;
+    let results = builder.search_regex("hello_.*", 2, false, false, true, 0, 0)?;
     assert_eq!(results.len(), 2);
     assert!(results.iter().all(|result| !result.matches.is_empty()));
+    assert!(results.iter().all(|result| !result.snippets.is_empty()));
     Ok(())
 }
 

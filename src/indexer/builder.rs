@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::config::CollieConfig;
 use crate::indexer::tokenizer::tokenize_query;
-use crate::regex_search::{self, CandidateQuery, ExactCandidate, RegexFileMatch};
+use crate::regex_search::{self, CandidateQuery, ExactCandidate, RegexFileMatch, RegexSnippet};
 use crate::storage::tantivy_index::TantivyIndex;
 use crate::storage::{IndexStats, SearchResult};
 use crate::symbols::adapters::AdapterRegistry;
@@ -18,6 +18,7 @@ use crate::symbols::{SymbolQuery, SymbolResult};
 pub struct RegexSearchResult {
     pub file_path: PathBuf,
     pub matches: Vec<RegexFileMatch>,
+    pub snippets: Vec<RegexSnippet>,
 }
 
 enum PatternMode {
@@ -354,6 +355,8 @@ impl IndexBuilder {
         multiline: bool,
         ignore_case: bool,
         collect_matches: bool,
+        before_context: usize,
+        after_context: usize,
     ) -> Result<Vec<RegexSearchResult>> {
         let exhaustive_matcher = grep_regex::RegexMatcherBuilder::new()
             .multi_line(true)
@@ -372,6 +375,8 @@ impl IndexBuilder {
                 &candidate_query,
                 multiline,
                 collect_matches,
+                before_context,
+                after_context,
             ));
         }
 
@@ -391,6 +396,8 @@ impl IndexBuilder {
                     &exhaustive_matcher,
                     multiline,
                     collect_matches,
+                    before_context,
+                    after_context,
                     limit,
                     &mut seen_candidates,
                     &mut results,
@@ -406,6 +413,8 @@ impl IndexBuilder {
                     &exhaustive_matcher,
                     multiline,
                     collect_matches,
+                    before_context,
+                    after_context,
                     limit,
                     &mut seen_candidates,
                     &mut results,
@@ -430,12 +439,7 @@ impl IndexBuilder {
     }
 
     /// Count files matching a regex pattern across the full indexed corpus.
-    pub fn count_regex(
-        &self,
-        pattern: &str,
-        multiline: bool,
-        ignore_case: bool,
-    ) -> Result<usize> {
+    pub fn count_regex(&self, pattern: &str, multiline: bool, ignore_case: bool) -> Result<usize> {
         let exhaustive_matcher = grep_regex::RegexMatcherBuilder::new()
             .multi_line(true)
             .dot_matches_new_line(multiline)
@@ -461,9 +465,19 @@ impl IndexBuilder {
         candidate_query: &CandidateQuery,
         multiline: bool,
         collect_matches: bool,
+        before_context: usize,
+        after_context: usize,
     ) -> Vec<RegexSearchResult> {
-        let candidates = self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
-        self.verify_regex_parallel(candidates.as_slice(), matcher, multiline, collect_matches)
+        let candidates =
+            self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
+        self.verify_regex_parallel(
+            candidates.as_slice(),
+            matcher,
+            multiline,
+            collect_matches,
+            before_context,
+            after_context,
+        )
     }
 
     fn count_regex_exhaustive(
@@ -473,7 +487,8 @@ impl IndexBuilder {
         candidate_query: &CandidateQuery,
         multiline: bool,
     ) -> usize {
-        let candidates = self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
+        let candidates =
+            self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
         self.count_regex_parallel(candidates.as_slice(), matcher, multiline)
     }
 
@@ -511,8 +526,7 @@ impl IndexBuilder {
             }
         }
 
-        if total_files > 0
-            && candidates.len() * 100 >= total_files * REGEX_EXHAUSTIVE_BROAD_PERCENT
+        if total_files > 0 && candidates.len() * 100 >= total_files * REGEX_EXHAUSTIVE_BROAD_PERCENT
         {
             return ExhaustiveRegexCandidates::Shared(self.tantivy.list_all_files_shared());
         }
@@ -526,22 +540,31 @@ impl IndexBuilder {
         matcher: &RegexMatcher,
         multiline: bool,
         collect_matches: bool,
+        before_context: usize,
+        after_context: usize,
     ) -> Vec<RegexSearchResult> {
         let mut results: Vec<RegexSearchResult> = files
             .par_iter()
             .map_init(
-                || regex_search::build_regex_searcher(multiline),
+                || {
+                    regex_search::build_regex_searcher_with_context(
+                        multiline,
+                        before_context,
+                        after_context,
+                    )
+                },
                 |searcher, candidate| {
                     if collect_matches {
-                        regex_search::apply_regex_to_file_with_searcher(
+                        regex_search::apply_regex_to_file_with_context_with_searcher(
                             &candidate.file_path,
                             matcher,
                             searcher,
                         )
-                        .filter(|matches| !matches.is_empty())
-                        .map(|matches| RegexSearchResult {
+                        .filter(|capture| !capture.matches.is_empty())
+                        .map(|capture| RegexSearchResult {
                             file_path: candidate.file_path.clone(),
-                            matches,
+                            matches: capture.matches,
+                            snippets: capture.snippets,
                         })
                     } else {
                         regex_search::file_has_regex_match_with_searcher(
@@ -553,6 +576,7 @@ impl IndexBuilder {
                         .map(|_| RegexSearchResult {
                             file_path: candidate.file_path.clone(),
                             matches: Vec::new(),
+                            snippets: Vec::new(),
                         })
                     }
                 },
@@ -569,7 +593,8 @@ impl IndexBuilder {
         matcher: &RegexMatcher,
         multiline: bool,
     ) -> usize {
-        files.par_iter()
+        files
+            .par_iter()
             .map_init(
                 || regex_search::build_regex_searcher(multiline),
                 |searcher, candidate| {
@@ -596,8 +621,7 @@ impl IndexBuilder {
             return true;
         }
 
-        let broad_threshold =
-            total_files.saturating_mul(REGEX_EXHAUSTIVE_BROAD_PERCENT) / 100;
+        let broad_threshold = total_files.saturating_mul(REGEX_EXHAUSTIVE_BROAD_PERCENT) / 100;
         let broad_threshold = broad_threshold.max(1);
 
         // If any exact phrase candidate is selective, narrowing is worth it.
@@ -719,15 +743,15 @@ impl IndexBuilder {
         matcher: &RegexMatcher,
         multiline: bool,
         collect_matches: bool,
+        before_context: usize,
+        after_context: usize,
         limit: usize,
         seen_candidates: &mut HashSet<PathBuf>,
         results: &mut Vec<RegexSearchResult>,
     ) -> usize {
         let mut new_candidates = 0usize;
 
-        let chunk_size = limit
-            .max(1)
-            .min(REGEX_VERIFY_CHUNK_CAP);
+        let chunk_size = limit.max(1).min(REGEX_VERIFY_CHUNK_CAP);
 
         for candidate_chunk in candidates.chunks(chunk_size) {
             if limit > 0 && results.len() >= limit {
@@ -751,6 +775,8 @@ impl IndexBuilder {
                 matcher,
                 multiline,
                 collect_matches,
+                before_context,
+                after_context,
             );
 
             for result in verified.into_iter().flatten() {
@@ -770,21 +796,28 @@ impl IndexBuilder {
         matcher: &RegexMatcher,
         multiline: bool,
         collect_matches: bool,
+        before_context: usize,
+        after_context: usize,
     ) -> Vec<Option<RegexSearchResult>> {
         if candidates.len() < REGEX_VERIFY_PARALLEL_THRESHOLD {
-            let mut searcher = regex_search::build_regex_searcher(multiline);
+            let mut searcher = regex_search::build_regex_searcher_with_context(
+                multiline,
+                before_context,
+                after_context,
+            );
             let mut verified = Vec::with_capacity(candidates.len());
             for candidate in candidates {
                 let result = if collect_matches {
-                    regex_search::apply_regex_to_file_with_searcher(
+                    regex_search::apply_regex_to_file_with_context_with_searcher(
                         &candidate.file_path,
                         matcher,
                         &mut searcher,
                     )
-                    .filter(|matches| !matches.is_empty())
-                    .map(|matches| RegexSearchResult {
+                    .filter(|capture| !capture.matches.is_empty())
+                    .map(|capture| RegexSearchResult {
                         file_path: candidate.file_path.clone(),
-                        matches,
+                        matches: capture.matches,
+                        snippets: capture.snippets,
                     })
                 } else {
                     regex_search::file_has_regex_match_with_searcher(
@@ -796,6 +829,7 @@ impl IndexBuilder {
                     .map(|_| RegexSearchResult {
                         file_path: candidate.file_path.clone(),
                         matches: Vec::new(),
+                        snippets: Vec::new(),
                     })
                 };
                 verified.push(result);
@@ -806,18 +840,25 @@ impl IndexBuilder {
         candidates
             .par_iter()
             .map_init(
-                || regex_search::build_regex_searcher(multiline),
+                || {
+                    regex_search::build_regex_searcher_with_context(
+                        multiline,
+                        before_context,
+                        after_context,
+                    )
+                },
                 |searcher, candidate| {
                     if collect_matches {
-                        regex_search::apply_regex_to_file_with_searcher(
+                        regex_search::apply_regex_to_file_with_context_with_searcher(
                             &candidate.file_path,
                             matcher,
                             searcher,
                         )
-                        .filter(|matches| !matches.is_empty())
-                        .map(|matches| RegexSearchResult {
+                        .filter(|capture| !capture.matches.is_empty())
+                        .map(|capture| RegexSearchResult {
                             file_path: candidate.file_path.clone(),
-                            matches,
+                            matches: capture.matches,
+                            snippets: capture.snippets,
                         })
                     } else {
                         regex_search::file_has_regex_match_with_searcher(
@@ -829,6 +870,7 @@ impl IndexBuilder {
                         .map(|_| RegexSearchResult {
                             file_path: candidate.file_path.clone(),
                             matches: Vec::new(),
+                            snippets: Vec::new(),
                         })
                     }
                 },

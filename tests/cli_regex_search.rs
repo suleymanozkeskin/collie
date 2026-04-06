@@ -165,6 +165,34 @@ fn regex_search_dot_plus_scans_all_files() -> Result<()> {
 }
 
 #[test]
+fn regex_search_context_flag_shows_surrounding_lines() -> Result<()> {
+    let worktree = create_worktree()?;
+    let content = "line1\nline2\nfn target_func() {}\nline4\nline5\n";
+    write_file(worktree.path(), "src/lib.rs", content)?;
+    build_index(worktree.path(), &[("src/lib.rs", content)])?;
+
+    let output = run_collie(worktree.path(), &["search", "-e", "target_func", "-C", "1"])?;
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let text = stdout(&output);
+    assert!(
+        text.contains("line2"),
+        "should show before-context, got: {}",
+        text
+    );
+    assert!(
+        text.contains("target_func"),
+        "should show match line, got: {}",
+        text
+    );
+    assert!(
+        text.contains("line4"),
+        "should show after-context, got: {}",
+        text
+    );
+    Ok(())
+}
+
+#[test]
 fn regex_count_ignores_default_limit() -> Result<()> {
     let worktree = create_worktree()?;
     let mut files = Vec::new();
@@ -180,7 +208,10 @@ fn regex_count_ignores_default_limit() -> Result<()> {
         .collect();
     build_index(worktree.path(), &tuples)?;
 
-    let output = run_collie(worktree.path(), &["search", "-e", "handle_request", "--count"])?;
+    let output = run_collie(
+        worktree.path(),
+        &["search", "-e", "handle_request", "--count"],
+    )?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     assert_eq!(stdout(&output), "25");
     Ok(())
