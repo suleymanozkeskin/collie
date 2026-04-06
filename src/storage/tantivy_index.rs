@@ -31,6 +31,18 @@ struct FileListManifest {
     paths: Vec<PathBuf>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ContentManifest {
+    version: u8,
+    entries: Vec<ContentEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ContentEntry {
+    path: PathBuf,
+    content: String,
+}
+
 struct SymbolHeapEntry {
     result: SymbolResult,
 }
@@ -111,6 +123,8 @@ pub struct TantivyIndex {
     writer_heap_bytes: usize,
     file_list_cache: RwLock<Option<Arc<[SearchResult]>>>,
     pending_file_list_deltas: HashMap<PathBuf, bool>,
+    content_cache: RwLock<Option<Arc<HashMap<PathBuf, Arc<str>>>>>,
+    pending_content_deltas: HashMap<PathBuf, Option<String>>,
 }
 
 const COLLIE_BODY: &str = "collie_body";
@@ -119,6 +133,19 @@ const COLLIE_IDENT_PARTS: &str = "collie_ident_parts";
 const COLLIE_QNAME_PARTS: &str = "collie_qname_parts";
 const FILE_LIST_MANIFEST: &str = "file-list.bin";
 const FILE_LIST_MANIFEST_VERSION: u8 = 1;
+const CONTENT_MANIFEST: &str = "contents.bin";
+const CONTENT_MANIFEST_VERSION: u8 = 1;
+
+fn content_manifest_path(index_dir: &Path) -> PathBuf {
+    index_dir
+        .parent()
+        .unwrap_or(index_dir)
+        .join(CONTENT_MANIFEST)
+}
+
+fn legacy_content_manifest_path(index_dir: &Path) -> PathBuf {
+    index_dir.join(CONTENT_MANIFEST)
+}
 
 fn build_schema() -> Schema {
     let mut builder = Schema::builder();
@@ -270,6 +297,8 @@ impl TantivyIndex {
             writer_heap_bytes: 15_000_000,
             file_list_cache: RwLock::new(None),
             pending_file_list_deltas: HashMap::new(),
+            content_cache: RwLock::new(None),
+            pending_content_deltas: HashMap::new(),
         })
     }
 
@@ -348,6 +377,7 @@ impl TantivyIndex {
         let term = Term::from_field_text(file_path_field, &file_path_str);
         writer.delete_term(term);
         self.note_file_list_delta(file_path, false);
+        self.note_content_delta(file_path, None);
         Ok(())
     }
 
@@ -370,6 +400,7 @@ impl TantivyIndex {
         ))?;
 
         self.note_file_list_delta(file_path, true);
+        self.note_content_delta(file_path, Some(content.to_owned()));
         Ok(())
     }
 
@@ -379,6 +410,7 @@ impl TantivyIndex {
     pub fn index_file_content_pretokenized(
         &mut self,
         file_path: &Path,
+        content: &str,
         body_tokens: PreTokenizedString,
         body_reversed_tokens: PreTokenizedString,
     ) -> Result<()> {
@@ -395,6 +427,7 @@ impl TantivyIndex {
         writer.add_document(doc)?;
 
         self.note_file_list_delta(file_path, true);
+        self.note_content_delta(file_path, Some(content.to_owned()));
         Ok(())
     }
 
@@ -590,7 +623,30 @@ impl TantivyIndex {
             .reload()
             .context("tantivy reader reload failed")?;
         self.refresh_file_list_cache_after_commit()?;
+        self.refresh_content_cache_after_commit()?;
         Ok(())
+    }
+
+    pub fn indexed_text(&self, file_path: &Path) -> Option<Arc<str>> {
+        self.indexed_texts_shared().get(file_path).cloned()
+    }
+
+    pub fn indexed_texts_shared(&self) -> Arc<HashMap<PathBuf, Arc<str>>> {
+        if let Ok(cache) = self.content_cache.read() {
+            if let Some(cached) = cache.as_ref() {
+                return Arc::clone(cached);
+            }
+        }
+
+        let contents = Self::load_content_manifest(&self.index_dir)
+            .ok()
+            .flatten()
+            .map(Arc::new)
+            .unwrap_or_else(|| Arc::new(HashMap::new()));
+        if let Ok(mut cache) = self.content_cache.write() {
+            *cache = Some(Arc::clone(&contents));
+        }
+        contents
     }
 
     /// Search for an exact token match.
@@ -1074,9 +1130,20 @@ impl TantivyIndex {
         }
     }
 
+    fn invalidate_content_cache(&self) {
+        if let Ok(mut cache) = self.content_cache.write() {
+            *cache = None;
+        }
+    }
+
     fn note_file_list_delta(&mut self, file_path: &Path, present: bool) {
         self.pending_file_list_deltas
             .insert(file_path.to_path_buf(), present);
+    }
+
+    fn note_content_delta(&mut self, file_path: &Path, content: Option<String>) {
+        self.pending_content_deltas
+            .insert(file_path.to_path_buf(), content);
     }
 
     fn load_file_list_manifest(index_dir: &Path) -> Result<Option<Vec<SearchResult>>> {
@@ -1122,6 +1189,71 @@ impl TantivyIndex {
                 tmp_path, manifest_path
             )
         })?;
+        Ok(())
+    }
+
+    fn load_content_manifest(index_dir: &Path) -> Result<Option<HashMap<PathBuf, Arc<str>>>> {
+        let manifest_path = content_manifest_path(index_dir);
+        if !manifest_path.exists() {
+            let legacy_path = legacy_content_manifest_path(index_dir);
+            if !legacy_path.exists() {
+                return Ok(None);
+            }
+            return Self::load_content_manifest_from_path(&legacy_path);
+        }
+
+        Self::load_content_manifest_from_path(&manifest_path)
+    }
+
+    fn load_content_manifest_from_path(
+        manifest_path: &Path,
+    ) -> Result<Option<HashMap<PathBuf, Arc<str>>>> {
+        let bytes = std::fs::read(manifest_path)
+            .with_context(|| format!("failed to read content manifest {:?}", manifest_path))?;
+        let manifest: ContentManifest = bincode::deserialize(&bytes)
+            .with_context(|| format!("failed to decode content manifest {:?}", manifest_path))?;
+        if manifest.version != CONTENT_MANIFEST_VERSION {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            manifest
+                .entries
+                .into_iter()
+                .map(|entry| (entry.path, Arc::<str>::from(entry.content)))
+                .collect(),
+        ))
+    }
+
+    fn write_content_manifest(&self, entries: &HashMap<PathBuf, Arc<str>>) -> Result<()> {
+        let manifest_path = content_manifest_path(&self.index_dir);
+        let tmp_path = manifest_path.with_extension("bin.tmp");
+        let mut ordered: Vec<_> = entries
+            .iter()
+            .map(|(path, content)| ContentEntry {
+                path: path.clone(),
+                content: content.to_string(),
+            })
+            .collect();
+        ordered.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+
+        let manifest = ContentManifest {
+            version: CONTENT_MANIFEST_VERSION,
+            entries: ordered,
+        };
+        let encoded = bincode::serialize(&manifest).context("failed to encode content manifest")?;
+        std::fs::write(&tmp_path, encoded)
+            .with_context(|| format!("failed to write content manifest {:?}", tmp_path))?;
+        std::fs::rename(&tmp_path, &manifest_path).with_context(|| {
+            format!(
+                "failed to move content manifest from {:?} to {:?}",
+                tmp_path, manifest_path
+            )
+        })?;
+        let legacy_path = legacy_content_manifest_path(&self.index_dir);
+        if legacy_path != manifest_path {
+            let _ = std::fs::remove_file(legacy_path);
+        }
         Ok(())
     }
 
@@ -1175,6 +1307,46 @@ impl TantivyIndex {
         self.write_file_list_manifest(&shared)?;
         if let Ok(mut cache) = self.file_list_cache.write() {
             *cache = Some(Arc::clone(&shared));
+        }
+        Ok(())
+    }
+
+    fn refresh_content_cache_after_commit(&mut self) -> Result<()> {
+        if self.pending_content_deltas.is_empty() {
+            self.invalidate_content_cache();
+            return Ok(());
+        }
+
+        let mut contents: HashMap<PathBuf, Arc<str>> = if let Ok(cache) = self.content_cache.read()
+        {
+            cache
+                .as_ref()
+                .map(|cached| {
+                    cached
+                        .iter()
+                        .map(|(path, content)| (path.clone(), Arc::clone(content)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
+        if contents.is_empty() {
+            contents = Self::load_content_manifest(&self.index_dir)?.unwrap_or_default();
+        }
+
+        for (path, content) in self.pending_content_deltas.drain() {
+            if let Some(content) = content {
+                contents.insert(path, Arc::<str>::from(content));
+            } else {
+                contents.remove(&path);
+            }
+        }
+
+        self.write_content_manifest(&contents)?;
+        if let Ok(mut cache) = self.content_cache.write() {
+            *cache = Some(Arc::new(contents));
         }
         Ok(())
     }

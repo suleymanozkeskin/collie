@@ -794,6 +794,7 @@ enum IndexPayload {
     /// File preprocessed successfully: ready for tantivy ingestion.
     Ready {
         path: PathBuf,
+        content: String,
         symbols: Vec<Symbol>,
         body_tokens: tantivy::tokenizer::PreTokenizedString,
         body_reversed_tokens: tantivy::tokenizer::PreTokenizedString,
@@ -996,6 +997,7 @@ fn bulk_rebuild_parallel(
         match payload {
             IndexPayload::Ready {
                 path,
+                content,
                 symbols,
                 body_tokens,
                 body_reversed_tokens,
@@ -1005,9 +1007,13 @@ fn bulk_rebuild_parallel(
                 let rel = path.strip_prefix(root).unwrap_or(&path);
                 snapshot_entries.push((rel.to_string_lossy().to_string(), file_size, modified_ns));
 
-                if let Err(err) =
-                    builder.index_pretokenized(&path, body_tokens, body_reversed_tokens, &symbols)
-                {
+                if let Err(err) = builder.index_pretokenized(
+                    &path,
+                    &content,
+                    body_tokens,
+                    body_reversed_tokens,
+                    &symbols,
+                ) {
                     let reason = err.to_string();
                     eprintln!("warning: skipping {}: {}", path.display(), reason);
                     skips.count += 1;
@@ -1111,6 +1117,7 @@ fn preprocess_file(
 
     IndexPayload::Ready {
         path: path.to_path_buf(),
+        content,
         symbols,
         body_tokens,
         body_reversed_tokens,

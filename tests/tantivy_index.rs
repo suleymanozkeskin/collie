@@ -327,3 +327,36 @@ fn list_all_files_tracks_incremental_add_and_remove_after_reopen() -> Result<()>
     assert_eq!(index.file_count(), 2);
     Ok(())
 }
+
+#[test]
+fn indexed_text_survives_reopen_and_removal() -> Result<()> {
+    let temp = TempDir::new()?;
+    let index_dir = temp.path().join("tantivy");
+
+    {
+        let mut index = TantivyIndex::open(&index_dir)?;
+        index.index_file_content("/a.rs".as_ref(), "fn stored_text() {}\n")?;
+        index.commit()?;
+        assert_eq!(
+            index.indexed_text("/a.rs".as_ref()).as_deref(),
+            Some("fn stored_text() {}\n")
+        );
+    }
+
+    {
+        let index = TantivyIndex::open(&index_dir)?;
+        assert_eq!(
+            index.indexed_text("/a.rs".as_ref()).as_deref(),
+            Some("fn stored_text() {}\n")
+        );
+    }
+
+    {
+        let mut index = TantivyIndex::open(&index_dir)?;
+        index.remove_by_path("/a.rs".as_ref())?;
+        index.commit()?;
+        assert!(index.indexed_text("/a.rs".as_ref()).is_none());
+    }
+
+    Ok(())
+}

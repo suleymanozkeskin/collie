@@ -2,6 +2,7 @@ mod common;
 
 use anyhow::Result;
 use common::*;
+use std::fs;
 
 #[test]
 fn regex_search_finds_matching_lines() -> Result<()> {
@@ -171,7 +172,10 @@ fn regex_search_context_flag_shows_surrounding_lines() -> Result<()> {
     write_file(worktree.path(), "src/lib.rs", content)?;
     build_index(worktree.path(), &[("src/lib.rs", content)])?;
 
-    let output = run_collie(worktree.path(), &["search", "-e", "target_func", "-C", "1"])?;
+    let output = run_collie(
+        worktree.path(),
+        &["search", "-e", "target_func", "-n", "0", "-C", "1"],
+    )?;
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let text = stdout(&output);
     assert!(
@@ -187,6 +191,38 @@ fn regex_search_context_flag_shows_surrounding_lines() -> Result<()> {
     assert!(
         text.contains("line4"),
         "should show after-context, got: {}",
+        text
+    );
+    Ok(())
+}
+
+#[test]
+fn regex_search_uses_indexed_text_when_source_file_is_missing() -> Result<()> {
+    let worktree = create_worktree()?;
+    let content = "line1\nline2\nfn target_func() {}\nline4\n";
+    let file_path = write_file(worktree.path(), "src/lib.rs", content)?;
+    build_index(worktree.path(), &[("src/lib.rs", content)])?;
+    fs::remove_file(&file_path)?;
+
+    let output = run_collie(
+        worktree.path(),
+        &["search", "-e", "target_func", "-n", "0", "-C", "1"],
+    )?;
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let text = stdout(&output);
+    assert!(
+        text.contains("target_func"),
+        "should show match from indexed text: {}",
+        text
+    );
+    assert!(
+        text.contains("line2"),
+        "should show stored before-context: {}",
+        text
+    );
+    assert!(
+        text.contains("line4"),
+        "should show stored after-context: {}",
         text
     );
     Ok(())

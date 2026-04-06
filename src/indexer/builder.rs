@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::config::CollieConfig;
 use crate::indexer::tokenizer::tokenize_query;
-use crate::regex_search::{self, CandidateQuery, ExactCandidate, RegexFileMatch, RegexSnippet};
+use crate::regex_search::{
+    self, CandidateQuery, ExactCandidate, LiteralQuery, RegexFileMatch, RegexSnippet,
+};
 use crate::storage::tantivy_index::TantivyIndex;
 use crate::storage::{IndexStats, SearchResult};
 use crate::symbols::adapters::AdapterRegistry;
@@ -224,12 +226,14 @@ impl IndexBuilder {
     pub fn index_pretokenized(
         &mut self,
         file_path: &Path,
+        content: &str,
         body_tokens: tantivy::tokenizer::PreTokenizedString,
         body_reversed_tokens: tantivy::tokenizer::PreTokenizedString,
         symbols: &[crate::symbols::Symbol],
     ) -> Result<()> {
         self.tantivy.index_file_content_pretokenized(
             file_path,
+            content,
             body_tokens,
             body_reversed_tokens,
         )?;
@@ -367,13 +371,16 @@ impl IndexBuilder {
 
         let exact_candidates = regex_search::extract_exact_candidates(pattern);
         let candidate_query = regex_search::extract_candidate_query(pattern);
+        let literal_query = regex_search::extract_literal_query(pattern);
 
         if limit == 0 {
             return Ok(self.search_regex_exhaustive(
                 &exhaustive_matcher,
                 &exact_candidates,
                 &candidate_query,
+                &literal_query,
                 multiline,
+                ignore_case,
                 collect_matches,
                 before_context,
                 after_context,
@@ -449,12 +456,15 @@ impl IndexBuilder {
 
         let exact_candidates = regex_search::extract_exact_candidates(pattern);
         let candidate_query = regex_search::extract_candidate_query(pattern);
+        let literal_query = regex_search::extract_literal_query(pattern);
 
         Ok(self.count_regex_exhaustive(
             &exhaustive_matcher,
             &exact_candidates,
             &candidate_query,
+            &literal_query,
             multiline,
+            ignore_case,
         ))
     }
 
@@ -463,13 +473,23 @@ impl IndexBuilder {
         matcher: &RegexMatcher,
         exact_candidates: &[ExactCandidate],
         candidate_query: &CandidateQuery,
+        literal_query: &LiteralQuery,
         multiline: bool,
+        ignore_case: bool,
         collect_matches: bool,
         before_context: usize,
         after_context: usize,
     ) -> Vec<RegexSearchResult> {
-        let candidates =
-            self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
+        let indexed_texts =
+            Self::should_use_indexed_text_exhaustive(candidate_query, literal_query)
+                .then(|| self.tantivy.indexed_texts_shared());
+        let candidates = self.collect_exhaustive_regex_candidates(
+            exact_candidates,
+            candidate_query,
+            literal_query,
+            ignore_case,
+            indexed_texts.as_ref().map(Arc::clone),
+        );
         self.verify_regex_parallel(
             candidates.as_slice(),
             matcher,
@@ -477,6 +497,7 @@ impl IndexBuilder {
             collect_matches,
             before_context,
             after_context,
+            indexed_texts,
         )
     }
 
@@ -485,17 +506,35 @@ impl IndexBuilder {
         matcher: &RegexMatcher,
         exact_candidates: &[ExactCandidate],
         candidate_query: &CandidateQuery,
+        literal_query: &LiteralQuery,
         multiline: bool,
+        ignore_case: bool,
     ) -> usize {
-        let candidates =
-            self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
-        self.count_regex_parallel(candidates.as_slice(), matcher, multiline)
+        let indexed_texts =
+            Self::should_use_indexed_text_exhaustive(candidate_query, literal_query)
+                .then(|| self.tantivy.indexed_texts_shared());
+        let candidates = self.collect_exhaustive_regex_candidates(
+            exact_candidates,
+            candidate_query,
+            literal_query,
+            ignore_case,
+            indexed_texts.as_ref().map(Arc::clone),
+        );
+        self.count_regex_parallel(
+            candidates.as_slice(),
+            matcher,
+            multiline,
+            indexed_texts,
+        )
     }
 
     fn collect_exhaustive_regex_candidates(
         &self,
         exact_candidates: &[ExactCandidate],
         candidate_query: &CandidateQuery,
+        literal_query: &LiteralQuery,
+        ignore_case: bool,
+        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
     ) -> ExhaustiveRegexCandidates {
         let total_files = self.tantivy.file_count();
         let use_all_files =
@@ -503,6 +542,19 @@ impl IndexBuilder {
 
         if use_all_files {
             return ExhaustiveRegexCandidates::Shared(self.tantivy.list_all_files_shared());
+        }
+
+        if !ignore_case {
+            if let Some(candidates) =
+                self.prefilter_exhaustive_candidates_from_indexed_text(literal_query, indexed_texts)
+            {
+                if total_files > 0
+                    && candidates.len() * 100 >= total_files * REGEX_EXHAUSTIVE_BROAD_PERCENT
+                {
+                    return ExhaustiveRegexCandidates::Shared(self.tantivy.list_all_files_shared());
+                }
+                return ExhaustiveRegexCandidates::Owned(candidates);
+            }
         }
 
         let mut seen = HashSet::new();
@@ -534,6 +586,90 @@ impl IndexBuilder {
         ExhaustiveRegexCandidates::Owned(candidates)
     }
 
+    fn prefilter_exhaustive_candidates_from_indexed_text(
+        &self,
+        literal_query: &LiteralQuery,
+        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
+    ) -> Option<Vec<SearchResult>> {
+        if !Self::should_prefilter_from_indexed_text(literal_query) {
+            return None;
+        }
+
+        let indexed_texts = indexed_texts?;
+        let all_files = self.tantivy.list_all_files_shared();
+        let mut candidates = Vec::new();
+        for candidate in all_files.iter() {
+            let Some(content) = indexed_texts.get(candidate.file_path.as_path()) else {
+                continue;
+            };
+            if regex_search::literal_query_matches(content.as_ref(), literal_query) {
+                candidates.push(candidate.clone());
+            }
+        }
+        Some(candidates)
+    }
+
+    fn should_use_indexed_text_exhaustive(
+        candidate_query: &CandidateQuery,
+        literal_query: &LiteralQuery,
+    ) -> bool {
+        match candidate_query {
+            CandidateQuery::Or(branches)
+                if branches.iter().all(|branch| branch.len() == 1)
+                    && !Self::has_structured_literal_query(literal_query) =>
+            {
+                false
+            }
+            _ => true,
+        }
+    }
+
+    fn should_prefilter_from_indexed_text(literal_query: &LiteralQuery) -> bool {
+        Self::has_structured_literal_query(literal_query)
+    }
+
+    fn has_structured_literal_query(literal_query: &LiteralQuery) -> bool {
+        fn meaningful_literals<'a>(literals: &'a [String]) -> Vec<&'a str> {
+            literals
+                .iter()
+                .map(String::as_str)
+                .filter(|literal| {
+                    literal
+                        .chars()
+                        .filter(|ch| ch.is_alphanumeric() || *ch == '_')
+                        .count()
+                        >= 2
+                })
+                .collect()
+        }
+
+        fn has_delimiter_literal(literals: &[&str]) -> bool {
+            literals.iter().any(|literal| {
+                let mut saw_word = false;
+                for ch in literal.chars() {
+                    if ch.is_alphanumeric() || ch == '_' {
+                        saw_word = true;
+                    } else if saw_word {
+                        return true;
+                    }
+                }
+                false
+            })
+        }
+
+        match literal_query {
+            LiteralQuery::All => false,
+            LiteralQuery::And(literals) => {
+                let meaningful = meaningful_literals(literals);
+                meaningful.len() >= 2 || has_delimiter_literal(&meaningful)
+            }
+            LiteralQuery::Or(branches) => branches.iter().any(|branch| {
+                let meaningful = meaningful_literals(branch);
+                meaningful.len() >= 2 || has_delimiter_literal(&meaningful)
+            }),
+        }
+    }
+
     fn verify_regex_parallel(
         &self,
         files: &[SearchResult],
@@ -542,6 +678,7 @@ impl IndexBuilder {
         collect_matches: bool,
         before_context: usize,
         after_context: usize,
+        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
     ) -> Vec<RegexSearchResult> {
         let mut results: Vec<RegexSearchResult> = files
             .par_iter()
@@ -554,30 +691,53 @@ impl IndexBuilder {
                     )
                 },
                 |searcher, candidate| {
+                    let indexed_text = indexed_texts
+                        .as_ref()
+                        .and_then(|texts| texts.get(candidate.file_path.as_path()));
                     if collect_matches {
-                        regex_search::apply_regex_to_file_with_context_with_searcher(
-                            &candidate.file_path,
-                            matcher,
-                            searcher,
-                        )
-                        .filter(|capture| !capture.matches.is_empty())
-                        .map(|capture| RegexSearchResult {
-                            file_path: candidate.file_path.clone(),
-                            matches: capture.matches,
-                            snippets: capture.snippets,
-                        })
+                        indexed_text
+                            .and_then(|content| {
+                                regex_search::apply_regex_to_content_with_context_with_searcher(
+                                    content.as_ref(),
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .or_else(|| {
+                                regex_search::apply_regex_to_file_with_context_with_searcher(
+                                    &candidate.file_path,
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .filter(|capture| !capture.matches.is_empty())
+                            .map(|capture| RegexSearchResult {
+                                file_path: candidate.file_path.clone(),
+                                matches: capture.matches,
+                                snippets: capture.snippets,
+                            })
                     } else {
-                        regex_search::file_has_regex_match_with_searcher(
-                            &candidate.file_path,
-                            matcher,
-                            searcher,
-                        )
-                        .filter(|matched| *matched)
-                        .map(|_| RegexSearchResult {
-                            file_path: candidate.file_path.clone(),
-                            matches: Vec::new(),
-                            snippets: Vec::new(),
-                        })
+                        indexed_text
+                            .and_then(|content| {
+                                regex_search::content_has_regex_match_with_searcher(
+                                    content.as_ref(),
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .or_else(|| {
+                                regex_search::file_has_regex_match_with_searcher(
+                                    &candidate.file_path,
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .filter(|matched| *matched)
+                            .map(|_| RegexSearchResult {
+                                file_path: candidate.file_path.clone(),
+                                matches: Vec::new(),
+                                snippets: Vec::new(),
+                            })
                     }
                 },
             )
@@ -592,6 +752,7 @@ impl IndexBuilder {
         files: &[SearchResult],
         matcher: &RegexMatcher,
         multiline: bool,
+        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
     ) -> usize {
         files
             .par_iter()
@@ -599,12 +760,24 @@ impl IndexBuilder {
                 || regex_search::build_regex_searcher(multiline),
                 |searcher, candidate| {
                     usize::from(
-                        regex_search::file_has_regex_match_with_searcher(
-                            &candidate.file_path,
-                            matcher,
-                            searcher,
-                        )
-                        .unwrap_or(false),
+                        indexed_texts
+                            .as_ref()
+                            .and_then(|texts| texts.get(candidate.file_path.as_path()))
+                            .and_then(|content| {
+                                regex_search::content_has_regex_match_with_searcher(
+                                    content.as_ref(),
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .or_else(|| {
+                                regex_search::file_has_regex_match_with_searcher(
+                                    &candidate.file_path,
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .unwrap_or(false),
                     )
                 },
             )
@@ -777,6 +950,7 @@ impl IndexBuilder {
                 collect_matches,
                 before_context,
                 after_context,
+                None,
             );
 
             for result in verified.into_iter().flatten() {
@@ -798,6 +972,7 @@ impl IndexBuilder {
         collect_matches: bool,
         before_context: usize,
         after_context: usize,
+        indexed_texts: Option<Arc<std::collections::HashMap<PathBuf, Arc<str>>>>,
     ) -> Vec<Option<RegexSearchResult>> {
         if candidates.len() < REGEX_VERIFY_PARALLEL_THRESHOLD {
             let mut searcher = regex_search::build_regex_searcher_with_context(
@@ -807,30 +982,53 @@ impl IndexBuilder {
             );
             let mut verified = Vec::with_capacity(candidates.len());
             for candidate in candidates {
+                let indexed_text = indexed_texts
+                    .as_ref()
+                    .and_then(|texts| texts.get(candidate.file_path.as_path()));
                 let result = if collect_matches {
-                    regex_search::apply_regex_to_file_with_context_with_searcher(
-                        &candidate.file_path,
-                        matcher,
-                        &mut searcher,
-                    )
-                    .filter(|capture| !capture.matches.is_empty())
-                    .map(|capture| RegexSearchResult {
-                        file_path: candidate.file_path.clone(),
-                        matches: capture.matches,
-                        snippets: capture.snippets,
-                    })
+                    indexed_text
+                        .and_then(|content| {
+                            regex_search::apply_regex_to_content_with_context_with_searcher(
+                                content.as_ref(),
+                                matcher,
+                                &mut searcher,
+                            )
+                        })
+                        .or_else(|| {
+                            regex_search::apply_regex_to_file_with_context_with_searcher(
+                                &candidate.file_path,
+                                matcher,
+                                &mut searcher,
+                            )
+                        })
+                        .filter(|capture| !capture.matches.is_empty())
+                        .map(|capture| RegexSearchResult {
+                            file_path: candidate.file_path.clone(),
+                            matches: capture.matches,
+                            snippets: capture.snippets,
+                        })
                 } else {
-                    regex_search::file_has_regex_match_with_searcher(
-                        &candidate.file_path,
-                        matcher,
-                        &mut searcher,
-                    )
-                    .filter(|matched| *matched)
-                    .map(|_| RegexSearchResult {
-                        file_path: candidate.file_path.clone(),
-                        matches: Vec::new(),
-                        snippets: Vec::new(),
-                    })
+                    indexed_text
+                        .and_then(|content| {
+                            regex_search::content_has_regex_match_with_searcher(
+                                content.as_ref(),
+                                matcher,
+                                &mut searcher,
+                            )
+                        })
+                        .or_else(|| {
+                            regex_search::file_has_regex_match_with_searcher(
+                                &candidate.file_path,
+                                matcher,
+                                &mut searcher,
+                            )
+                        })
+                        .filter(|matched| *matched)
+                        .map(|_| RegexSearchResult {
+                            file_path: candidate.file_path.clone(),
+                            matches: Vec::new(),
+                            snippets: Vec::new(),
+                        })
                 };
                 verified.push(result);
             }
@@ -848,30 +1046,53 @@ impl IndexBuilder {
                     )
                 },
                 |searcher, candidate| {
+                    let indexed_text = indexed_texts
+                        .as_ref()
+                        .and_then(|texts| texts.get(candidate.file_path.as_path()));
                     if collect_matches {
-                        regex_search::apply_regex_to_file_with_context_with_searcher(
-                            &candidate.file_path,
-                            matcher,
-                            searcher,
-                        )
-                        .filter(|capture| !capture.matches.is_empty())
-                        .map(|capture| RegexSearchResult {
-                            file_path: candidate.file_path.clone(),
-                            matches: capture.matches,
-                            snippets: capture.snippets,
-                        })
+                        indexed_text
+                            .and_then(|content| {
+                                regex_search::apply_regex_to_content_with_context_with_searcher(
+                                    content.as_ref(),
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .or_else(|| {
+                                regex_search::apply_regex_to_file_with_context_with_searcher(
+                                    &candidate.file_path,
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .filter(|capture| !capture.matches.is_empty())
+                            .map(|capture| RegexSearchResult {
+                                file_path: candidate.file_path.clone(),
+                                matches: capture.matches,
+                                snippets: capture.snippets,
+                            })
                     } else {
-                        regex_search::file_has_regex_match_with_searcher(
-                            &candidate.file_path,
-                            matcher,
-                            searcher,
-                        )
-                        .filter(|matched| *matched)
-                        .map(|_| RegexSearchResult {
-                            file_path: candidate.file_path.clone(),
-                            matches: Vec::new(),
-                            snippets: Vec::new(),
-                        })
+                        indexed_text
+                            .and_then(|content| {
+                                regex_search::content_has_regex_match_with_searcher(
+                                    content.as_ref(),
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .or_else(|| {
+                                regex_search::file_has_regex_match_with_searcher(
+                                    &candidate.file_path,
+                                    matcher,
+                                    searcher,
+                                )
+                            })
+                            .filter(|matched| *matched)
+                            .map(|_| RegexSearchResult {
+                                file_path: candidate.file_path.clone(),
+                                matches: Vec::new(),
+                                snippets: Vec::new(),
+                            })
                     }
                 },
             )

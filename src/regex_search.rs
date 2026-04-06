@@ -19,6 +19,14 @@ pub enum CandidateQuery {
     Or(Vec<Vec<String>>),
 }
 
+/// Proven literal substrings that must appear for a regex to match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LiteralQuery {
+    All,
+    And(Vec<String>),
+    Or(Vec<Vec<String>>),
+}
+
 /// A stronger exact candidate extracted from regex literals.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExactCandidate {
@@ -77,6 +85,22 @@ pub fn extract_candidate_query(pattern: &str) -> CandidateQuery {
     merge_candidates(seq_to_candidate(&prefix_seq), seq_to_candidate(&suffix_seq))
 }
 
+/// Extract raw literal substrings from a regex pattern string.
+pub fn extract_literal_query(pattern: &str) -> LiteralQuery {
+    let hir = match regex_syntax::parse(pattern) {
+        Ok(h) => h,
+        Err(_) => return LiteralQuery::All,
+    };
+
+    let prefix_seq = Extractor::new().kind(ExtractKind::Prefix).extract(&hir);
+    let suffix_seq = Extractor::new().kind(ExtractKind::Suffix).extract(&hir);
+
+    merge_literal_queries(
+        seq_to_literal_query(&prefix_seq),
+        seq_to_literal_query(&suffix_seq),
+    )
+}
+
 /// Extract exact literal candidates while preserving token order and positions.
 pub fn extract_exact_candidates(pattern: &str) -> Vec<ExactCandidate> {
     let hir = match regex_syntax::parse(pattern) {
@@ -128,6 +152,35 @@ fn seq_to_candidate(seq: &Seq) -> CandidateQuery {
     }
 }
 
+fn seq_to_literal_query(seq: &Seq) -> LiteralQuery {
+    let lits = match seq.literals() {
+        Some(l) if !l.is_empty() => l,
+        _ => return LiteralQuery::All,
+    };
+
+    if lits.len() == 1 {
+        let literal = String::from_utf8_lossy(lits[0].as_bytes()).into_owned();
+        return if literal.is_empty() {
+            LiteralQuery::All
+        } else {
+            LiteralQuery::And(vec![literal])
+        };
+    }
+
+    let branches: Vec<Vec<String>> = lits
+        .iter()
+        .map(|lit| String::from_utf8_lossy(lit.as_bytes()).into_owned())
+        .filter(|literal| !literal.is_empty())
+        .map(|literal| vec![literal])
+        .collect();
+
+    match branches.len() {
+        0 => LiteralQuery::All,
+        1 => LiteralQuery::And(branches.into_iter().next().unwrap()),
+        _ => LiteralQuery::Or(branches),
+    }
+}
+
 fn merge_candidates(a: CandidateQuery, b: CandidateQuery) -> CandidateQuery {
     match (a, b) {
         (CandidateQuery::All, other) | (other, CandidateQuery::All) => other,
@@ -142,6 +195,33 @@ fn merge_candidates(a: CandidateQuery, b: CandidateQuery) -> CandidateQuery {
         (CandidateQuery::And(t), CandidateQuery::Or(_))
         | (CandidateQuery::Or(_), CandidateQuery::And(t)) => CandidateQuery::And(t),
         (CandidateQuery::Or(a_b), CandidateQuery::Or(_)) => CandidateQuery::Or(a_b),
+    }
+}
+
+fn merge_literal_queries(a: LiteralQuery, b: LiteralQuery) -> LiteralQuery {
+    match (a, b) {
+        (LiteralQuery::All, other) | (other, LiteralQuery::All) => other,
+        (LiteralQuery::And(mut a_t), LiteralQuery::And(b_t)) => {
+            for t in b_t {
+                if !a_t.contains(&t) {
+                    a_t.push(t);
+                }
+            }
+            LiteralQuery::And(a_t)
+        }
+        (LiteralQuery::And(t), LiteralQuery::Or(_))
+        | (LiteralQuery::Or(_), LiteralQuery::And(t)) => LiteralQuery::And(t),
+        (LiteralQuery::Or(a_b), LiteralQuery::Or(_)) => LiteralQuery::Or(a_b),
+    }
+}
+
+pub fn literal_query_matches(content: &str, query: &LiteralQuery) -> bool {
+    match query {
+        LiteralQuery::All => true,
+        LiteralQuery::And(literals) => literals.iter().all(|literal| content.contains(literal)),
+        LiteralQuery::Or(branches) => branches
+            .iter()
+            .any(|branch| branch.iter().all(|literal| content.contains(literal))),
     }
 }
 
@@ -313,6 +393,19 @@ pub fn apply_regex_to_file_with_searcher(
     Some(sink.matches)
 }
 
+/// Apply a grep-style regex matcher against in-memory content.
+pub fn apply_regex_to_content_with_searcher(
+    content: &str,
+    matcher: &RegexMatcher,
+    searcher: &mut Searcher,
+) -> Option<Vec<RegexFileMatch>> {
+    let mut sink = RegexSink::default();
+    searcher
+        .search_slice(matcher, content.as_bytes(), &mut sink)
+        .ok()?;
+    Some(sink.matches)
+}
+
 /// Apply a grep-style matcher and capture snippet-ready context lines in the
 /// same file pass used for regex verification.
 pub fn apply_regex_to_file_with_context_with_searcher(
@@ -325,6 +418,20 @@ pub fn apply_regex_to_file_with_context_with_searcher(
     Some(sink.finish())
 }
 
+/// Apply a grep-style matcher and capture snippet-ready context lines against
+/// in-memory content.
+pub fn apply_regex_to_content_with_context_with_searcher(
+    content: &str,
+    matcher: &RegexMatcher,
+    searcher: &mut Searcher,
+) -> Option<RegexMatchCapture> {
+    let mut sink = RegexContextSink::default();
+    searcher
+        .search_slice(matcher, content.as_bytes(), &mut sink)
+        .ok()?;
+    Some(sink.finish())
+}
+
 /// Return whether a grep-style matcher matched a file using a reusable searcher.
 pub fn file_has_regex_match_with_searcher(
     file_path: &Path,
@@ -333,6 +440,19 @@ pub fn file_has_regex_match_with_searcher(
 ) -> Option<bool> {
     let mut sink = RegexPresenceSink::default();
     searcher.search_path(matcher, file_path, &mut sink).ok()?;
+    Some(sink.found)
+}
+
+/// Return whether a grep-style matcher matched in-memory content.
+pub fn content_has_regex_match_with_searcher(
+    content: &str,
+    matcher: &RegexMatcher,
+    searcher: &mut Searcher,
+) -> Option<bool> {
+    let mut sink = RegexPresenceSink::default();
+    searcher
+        .search_slice(matcher, content.as_bytes(), &mut sink)
+        .ok()?;
     Some(sink.found)
 }
 

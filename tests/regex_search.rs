@@ -1,7 +1,8 @@
 use collie_search::regex_search::{
-    CandidateQuery, apply_regex_to_file, apply_regex_to_file_searcher,
+    CandidateQuery, LiteralQuery, apply_regex_to_file, apply_regex_to_file_searcher,
     apply_regex_to_file_with_context_with_searcher, build_regex_searcher_with_context,
-    extract_candidate_query, extract_exact_candidates,
+    extract_candidate_query, extract_exact_candidates, extract_literal_query,
+    literal_query_matches,
 };
 use std::io::Write;
 
@@ -87,6 +88,24 @@ fn exact_candidates_preserve_position_gaps_after_short_tokens() {
     assert!(candidates.iter().any(|candidate| {
         candidate.terms == vec![(0, "foo".to_string()), (2, "bar".to_string())]
     }));
+}
+
+#[test]
+fn literal_query_preserves_raw_punctuation() {
+    match extract_literal_query(r"errors?\.New\(") {
+        LiteralQuery::Or(branches) => {
+            let flat: Vec<String> = branches.into_iter().flatten().collect();
+            assert!(flat.iter().any(|literal| literal.contains("New(")));
+        }
+        other => panic!("expected Or literal branches, got {:?}", other),
+    }
+}
+
+#[test]
+fn literal_query_matching_requires_branch_literals() {
+    let query = extract_literal_query(r"TODO|FIXME|HACK");
+    assert!(literal_query_matches("contains FIXME here", &query));
+    assert!(!literal_query_matches("contains NOTE here", &query));
 }
 
 // --- Regex file application ---
