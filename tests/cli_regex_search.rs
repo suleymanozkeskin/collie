@@ -163,3 +163,25 @@ fn regex_search_dot_plus_scans_all_files() -> Result<()> {
     assert!(text.contains("Found"), "should find results, got: {}", text);
     Ok(())
 }
+
+#[test]
+fn regex_count_ignores_default_limit() -> Result<()> {
+    let worktree = create_worktree()?;
+    let mut files = Vec::new();
+    for i in 0..25 {
+        let rel = format!("src/file_{i:02}.rs");
+        let content = "fn handle_request() { handle_request(); }\n".to_string();
+        files.push((rel, content));
+    }
+
+    let tuples: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, content)| (path.as_str(), content.as_str()))
+        .collect();
+    build_index(worktree.path(), &tuples)?;
+
+    let output = run_collie(worktree.path(), &["search", "-e", "handle_request", "--count"])?;
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "25");
+    Ok(())
+}

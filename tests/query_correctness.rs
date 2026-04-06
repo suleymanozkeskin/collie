@@ -400,6 +400,35 @@ fn ranked_search_respects_limit() -> Result<()> {
 }
 
 #[test]
+fn regex_ranked_search_respects_limit() -> Result<()> {
+    let (temp, _, mut builder) = setup()?;
+    for name in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+        let path = write_file(temp.path(), name, "fn hello_world() { hello_world(); }\n")?;
+        builder.index_file(&path)?;
+    }
+    builder.save()?;
+
+    let results = builder.search_regex("hello_.*", 2, false, false, false)?;
+    assert_eq!(results.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn regex_ranked_search_with_matches_respects_limit() -> Result<()> {
+    let (temp, _, mut builder) = setup()?;
+    for name in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+        let path = write_file(temp.path(), name, "fn hello_world() { hello_world(); }\n")?;
+        builder.index_file(&path)?;
+    }
+    builder.save()?;
+
+    let results = builder.search_regex("hello_.*", 2, false, false, true)?;
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|result| !result.matches.is_empty()));
+    Ok(())
+}
+
+#[test]
 fn ranked_multi_word_search() -> Result<()> {
     let (temp, _, mut builder) = setup()?;
     let a = write_file(temp.path(), "a.go", "func Validate(auth Authorization) { }")?;

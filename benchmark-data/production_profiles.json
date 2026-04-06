@@ -78,7 +78,8 @@
         "interface\\s*\\{",
         "TODO|FIXME|HACK",
         "context\\.Context",
-        "errors?\\.New\\("
+        "errors?\\.New\\(",
+        "package\\s+main"
       ],
       "symbol_regex_queries": [
         {

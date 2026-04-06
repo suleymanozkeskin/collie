@@ -99,8 +99,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runs-per-query",
         type=int,
-        default=5,
-        help="Measured runs per query. Default: 5.",
+        default=15,
+        help="Measured runs per query. Default: 15.",
     )
     parser.add_argument(
         "--warmups",
@@ -136,6 +136,16 @@ def parse_args() -> argparse.Namespace:
         help="Skip ripgrep baselines for lexical queries.",
     )
     parser.add_argument(
+        "--regex-bounded-limit",
+        type=int,
+        default=20,
+        help="Result limit for bounded regex benchmarks. Default: 20.",
+    )
+    parser.add_argument(
+        "--state-dir",
+        help="Set COLLIE_STATE_DIR for an isolated benchmark cache/index location.",
+    )
+    parser.add_argument(
         "--keep-daemon-running",
         action="store_true",
         help="Leave the daemon running after the benchmark completes.",
@@ -169,6 +179,12 @@ def main() -> int:
     if args.warmups < 0:
         print("error: --warmups must be >= 0", file=sys.stderr)
         return 1
+    if args.regex_bounded_limit < 1:
+        print("error: --regex-bounded-limit must be >= 1", file=sys.stderr)
+        return 1
+
+    if args.state_dir:
+        os.environ["COLLIE_STATE_DIR"] = str(Path(args.state_dir).expanduser().resolve())
 
     repo = resolve_target_repo(collie_root, args.repo, args.profile, profiles_doc["profiles"])
     if not repo.exists():
@@ -207,6 +223,7 @@ def main() -> int:
             "platform": platform.platform(),
             "python": sys.version.split()[0],
             "time_tool": time_tool["mode"],
+            "collie_state_dir": os.environ.get("COLLIE_STATE_DIR"),
         },
         "collie_repo": {
             "path": str(collie_root),
@@ -224,6 +241,11 @@ def main() -> int:
         },
         "profile": profile,
         "profile_selection": profile_selection,
+        "benchmark_settings": {
+            "runs_per_query": args.runs_per_query,
+            "warmups": args.warmups,
+            "regex_bounded_limit": args.regex_bounded_limit,
+        },
         "metrics": {},
     }
 
@@ -283,6 +305,7 @@ def main() -> int:
             profile=profile,
             runs_per_query=args.runs_per_query,
             warmups=args.warmups,
+            regex_bounded_limit=args.regex_bounded_limit,
             time_tool=time_tool,
             rg_path=rg_path if not args.skip_rg else None,
         )
@@ -677,6 +700,7 @@ def measure_queries(
     profile: dict,
     runs_per_query: int,
     warmups: int,
+    regex_bounded_limit: int,
     time_tool: dict,
     rg_path: str | None,
 ) -> dict:
@@ -775,7 +799,15 @@ def measure_queries(
         for _ in range(warmups):
             ensure_measurement_ok(
                 subprocess.run(
-                    [str(binary), "search", query, "--regex", "--no-snippets", "-n", "50"],
+                    [
+                        str(binary),
+                        "search",
+                        query,
+                        "--regex",
+                        "--no-snippets",
+                        "-n",
+                        str(regex_bounded_limit),
+                    ],
                     cwd=repo,
                     capture_output=True,
                     text=True,
@@ -796,7 +828,15 @@ def measure_queries(
         bounded_runs = [
             summarize_run(
                 timed_run(
-                    [str(binary), "search", query, "--regex", "--no-snippets", "-n", "50"],
+                    [
+                        str(binary),
+                        "search",
+                        query,
+                        "--regex",
+                        "--no-snippets",
+                        "-n",
+                        str(regex_bounded_limit),
+                    ],
                     cwd=repo,
                     time_tool=time_tool,
                 ),
@@ -1232,12 +1272,15 @@ def print_summary(output_path: Path, report: dict) -> None:
             print_kv("Status", incremental.get("reason", "unavailable"))
 
     query_metrics = metrics.get("queries")
+    settings = report.get("benchmark_settings", {})
     if query_metrics:
         print_section("Query snapshot")
         print_query_snapshot("Lexical", query_metrics.get("lexical", []), include_rg=True)
         print_query_snapshot("Symbol", query_metrics.get("symbol", []), include_rg=False)
         print_query_snapshot(
-            "Regex n=50", query_metrics.get("regex_bounded", query_metrics.get("regex", [])), include_rg=True
+            f"Regex bounded n={settings.get('regex_bounded_limit', 20)}",
+            query_metrics.get("regex_bounded", query_metrics.get("regex", [])),
+            include_rg=True,
         )
         print_query_snapshot(
             "Regex n=0", query_metrics.get("regex_exhaustive", []), include_rg=True
@@ -1374,7 +1417,7 @@ def check_regex_gate(baseline_path: str, current_report: dict) -> int:
 
     # --- Bounded (high priority) ---
     print()
-    print("Bounded (n=50) — regression threshold: {:.0f}x".format(
+    print("Bounded — regression threshold: {:.0f}x".format(
         BOUNDED_REGRESSION_THRESHOLD
     ))
     print("-" * 60)

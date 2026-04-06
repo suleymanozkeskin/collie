@@ -817,6 +817,37 @@ impl TantivyIndex {
         self.count_file_query(&query)
     }
 
+    /// Count files containing tokens starting with prefix.
+    pub fn count_prefix(&self, prefix: &str) -> usize {
+        let normalized = prefix.to_lowercase();
+        let pattern = format!("{}.*", regex::escape(&normalized));
+        match RegexQuery::from_pattern(&pattern, self.schema.body) {
+            Ok(query) => self.count_file_query(&query),
+            Err(_) => 0,
+        }
+    }
+
+    /// Count files containing tokens ending with suffix.
+    pub fn count_suffix(&self, suffix: &str) -> usize {
+        let normalized = suffix.to_lowercase();
+        let reversed: String = normalized.chars().rev().collect();
+        let pattern = format!("{}.*", regex::escape(&reversed));
+        match RegexQuery::from_pattern(&pattern, self.schema.body_reversed) {
+            Ok(query) => self.count_file_query(&query),
+            Err(_) => 0,
+        }
+    }
+
+    /// Count files containing tokens with the given substring.
+    pub fn count_substring(&self, substring: &str) -> usize {
+        let normalized = substring.to_lowercase();
+        let pattern = format!(".*{}.*", regex::escape(&normalized));
+        match RegexQuery::from_pattern(&pattern, self.schema.body) {
+            Ok(query) => self.count_file_query(&query),
+            Err(_) => 0,
+        }
+    }
+
     /// Count files containing all tokens exactly.
     pub fn count_multi_term(&self, tokens: &[String]) -> usize {
         let subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = tokens

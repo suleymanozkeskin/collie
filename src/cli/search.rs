@@ -292,14 +292,23 @@ struct SearchOpts<'a> {
 }
 
 fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
+    if opts.count {
+        if opts.glob_pattern.is_none() {
+            let count = builder.count_pattern(opts.pattern);
+            println!("{}", count);
+            return Ok(count > 0);
+        }
+
+        let results = builder.search_pattern(opts.pattern);
+        let results = filter_by_glob(&results, opts);
+        let count = results.len();
+        println!("{}", count);
+        return Ok(count > 0);
+    }
+
     let results = builder.search_pattern_ranked(opts.pattern, opts.limit);
     let results = filter_by_glob(&results, opts);
     let found = !results.is_empty();
-
-    if opts.count {
-        println!("{}", results.len());
-        return Ok(found);
-    }
 
     if matches!(opts.format, OutputFormat::Json) {
         let json_results: Vec<JsonResult> = results
@@ -413,6 +422,29 @@ fn run_token_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
 }
 
 fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
+    if opts.count {
+        if opts.glob_pattern.is_none() {
+            let count = builder.count_regex(opts.pattern, opts.multiline, opts.ignore_case)?;
+            println!("{}", count);
+            return Ok(count > 0);
+        }
+
+        let results = builder.search_regex(
+            opts.pattern,
+            0,
+            opts.multiline,
+            opts.ignore_case,
+            false,
+        )?;
+        let results: Vec<_> = results
+            .into_iter()
+            .filter(|r| match_glob(&r.file_path, opts))
+            .collect();
+        let count = results.len();
+        println!("{}", count);
+        return Ok(count > 0);
+    }
+
     let results = builder.search_regex(
         opts.pattern,
         opts.limit,
@@ -425,11 +457,6 @@ fn run_regex_search(builder: &IndexBuilder, opts: &SearchOpts) -> Result<bool> {
         .filter(|r| match_glob(&r.file_path, opts))
         .collect();
     let found = !results.is_empty();
-
-    if opts.count {
-        println!("{}", results.len());
-        return Ok(found);
-    }
 
     if matches!(opts.format, OutputFormat::Json) {
         let json_results: Vec<JsonResult> = results

@@ -175,3 +175,25 @@ fn search_no_results_prints_expected_message() -> Result<()> {
     assert_eq!(stdout(&output), "No results found for pattern: missing");
     Ok(())
 }
+
+#[test]
+fn token_count_ignores_default_limit() -> Result<()> {
+    let worktree = create_worktree()?;
+    let mut files = Vec::new();
+    for i in 0..25 {
+        let rel = format!("src/file_{i:02}.rs");
+        let content = "fn count_me() { count_me(); }\n".to_string();
+        files.push((rel, content));
+    }
+
+    let tuples: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, content)| (path.as_str(), content.as_str()))
+        .collect();
+    build_index(worktree.path(), &tuples)?;
+
+    let output = run_collie(worktree.path(), &["search", "count_me", "--count"])?;
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "25");
+    Ok(())
+}

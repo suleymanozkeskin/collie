@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import random
 import shutil
@@ -216,6 +217,30 @@ def fmt_speedup(collie: float, rg: float) -> str:
     return f"{rg / collie:.1f}x"
 
 
+def latency_stats(values: list[float]) -> dict[str, float]:
+    sorted_values = sorted(float(v) for v in values)
+    return {
+        "min": round(sorted_values[0], 2),
+        "max": round(sorted_values[-1], 2),
+        "mean": round(statistics.fmean(sorted_values), 2),
+        "p50": round(percentile(sorted_values, 50), 2),
+        "p95": round(percentile(sorted_values, 95), 2),
+        "p99": round(percentile(sorted_values, 99), 2),
+    }
+
+
+def percentile(sorted_values: list[float], p: float) -> float:
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = (len(sorted_values) - 1) * (p / 100.0)
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return sorted_values[lower]
+    frac = rank - lower
+    return sorted_values[lower] * (1.0 - frac) + sorted_values[upper] * frac
+
+
 def dir_size_bytes(path: Path) -> int:
     total = 0
     for root, dirs, files in os.walk(path):
@@ -238,11 +263,15 @@ def parse_args() -> argparse.Namespace:
         description="Collie vs ripgrep search benchmark with detailed report."
     )
     parser.add_argument("repo", help="Path to the repository to benchmark.")
-    parser.add_argument("--runs-per-query", type=int, default=10)
-    parser.add_argument("--binary", help="Path to collie-search binary.")
+    parser.add_argument("--runs-per-query", type=int, default=15)
+    parser.add_argument("--binary", help="Path to the collie binary.")
     parser.add_argument("--queries", choices=["large", "small", "auto"], default="auto")
     parser.add_argument("--skip-incremental", action="store_true", help="Skip watcher latency test.")
     parser.add_argument("--output", help="JSON output path.")
+    parser.add_argument(
+        "--state-dir",
+        help="Set COLLIE_STATE_DIR for an isolated benchmark cache/index location.",
+    )
     return parser.parse_args()
 
 
@@ -253,9 +282,12 @@ def main() -> int:
         print(f"error: repo not found: {repo}", file=sys.stderr)
         return 1
 
+    if args.state_dir:
+        os.environ["COLLIE_STATE_DIR"] = str(Path(args.state_dir).expanduser().resolve())
+
     script_dir = Path(__file__).resolve().parent
     collie_root = script_dir.parent
-    binary = args.binary or str(collie_root / "target" / "release" / "collie-search")
+    binary = args.binary or str(collie_root / "target" / "release" / "collie")
     if not Path(binary).exists():
         print(f"error: binary not found: {binary}\nRun: cargo build --release", file=sys.stderr)
         return 1
@@ -291,18 +323,7 @@ def main() -> int:
     if not daemon_was_running:
         # Stop and clean for a fair cold start measurement
         subprocess.run([binary, "stop", str(repo)], capture_output=True)
-        collie_dir = repo / ".collie"
-        for name in ["CURRENT", "CURRENT.tmp", "collie.pid", "daemon-state.json",
-                      "daemon-state.json.tmp", "daemon.log"]:
-            p = collie_dir / name
-            if p.exists():
-                p.unlink(missing_ok=True)
-        for name in ["generations", "tantivy"]:
-            p = collie_dir / name
-            if p.is_dir():
-                shutil.rmtree(p, ignore_errors=True)
-            elif p.exists():
-                p.unlink(missing_ok=True)
+        subprocess.run([binary, "clean", str(repo)], capture_output=True)
 
         start = time.perf_counter()
         subprocess.run([binary, "watch", str(repo)], check=True, capture_output=True, text=True)
@@ -397,8 +418,10 @@ def main() -> int:
     for q in queries:
         ct = collie_times[q]
         rt = rg_times[q]
-        c_p50 = statistics.median(ct)
-        r_p50 = statistics.median(rt)
+        c_summary = latency_stats(ct)
+        r_summary = latency_stats(rt)
+        c_p50 = c_summary["p50"]
+        r_p50 = r_summary["p50"]
         qt = query_type(q)
         by_type[qt].append((c_p50, r_p50))
         all_collie.extend(ct)
@@ -407,8 +430,10 @@ def main() -> int:
         print(f"  {q:<22} {qt:<10} {fmt_ms(c_p50):>11} {fmt_ms(r_p50):>11} {sp:>9} {collie_counts.get(q,0):>10} {rg_counts.get(q,0):>10}")
         query_data.append({
             "query": q, "type": qt,
+            "collie_stats_ms": c_summary,
             "collie_p50_ms": round(c_p50, 2), "collie_avg_ms": round(statistics.fmean(ct), 2),
             "collie_min_ms": round(min(ct), 2), "collie_max_ms": round(max(ct), 2),
+            "rg_stats_ms": r_summary,
             "rg_p50_ms": round(r_p50, 2), "rg_avg_ms": round(statistics.fmean(rt), 2),
             "rg_min_ms": round(min(rt), 2), "rg_max_ms": round(max(rt), 2),
             "collie_results": collie_counts.get(q, 0), "rg_results": rg_counts.get(q, 0),
@@ -429,8 +454,10 @@ def main() -> int:
         print(f"  {qt:<22} {fmt_ms(c_med):>11} {fmt_ms(r_med):>11} {sp:>9}")
         type_summary[qt] = {"collie_p50_ms": round(c_med, 2), "rg_p50_ms": round(r_med, 2)}
 
-    c_agg = statistics.median(all_collie)
-    r_agg = statistics.median(all_rg)
+    c_agg_stats = latency_stats(all_collie)
+    r_agg_stats = latency_stats(all_rg)
+    c_agg = c_agg_stats["p50"]
+    r_agg = r_agg_stats["p50"]
     print(f"  {'-'*22} {'-'*11} {'-'*11} {'-'*9}")
     print(f"  {'OVERALL':<22} {fmt_ms(c_agg):>11} {fmt_ms(r_agg):>11} {fmt_speedup(c_agg, r_agg):>9}")
 
@@ -451,6 +478,7 @@ def main() -> int:
     output_data = {
         "timestamp_utc": now.isoformat(),
         "repo": str(repo),
+        "collie_state_dir": os.environ.get("COLLIE_STATE_DIR"),
         "file_count": file_count,
         "indexed_files": indexed_files,
         "index_size_bytes": index_size,
@@ -461,6 +489,8 @@ def main() -> int:
         "queries": query_data,
         "type_summary": type_summary,
         "aggregate": {
+            "collie_stats_ms": c_agg_stats,
+            "rg_stats_ms": r_agg_stats,
             "collie_p50_ms": round(c_agg, 2),
             "rg_p50_ms": round(r_agg, 2),
             "speedup": round(r_agg / c_agg, 2) if c_agg > 0 else None,

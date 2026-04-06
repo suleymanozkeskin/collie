@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -20,21 +21,6 @@ DEFAULT_QUERIES = [
     "CustomResourceDefinition",
     "kube%",
     "%informer%",
-]
-
-RESET_STATE_FILES = [
-    "index.mmap",
-    "index.mmap.tmp",
-    "index.mmap.rebuild",
-    "index.rebuild",
-    "collie.pid",
-    "daemon-state.json",
-    "daemon-state.json.tmp",
-    "daemon.log",
-    "CURRENT",
-    "CURRENT.tmp",
-    "tantivy",
-    "generations",
 ]
 
 COMMENT_BY_SUFFIX = {
@@ -83,8 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--search-runs",
         type=int,
-        default=3,
-        help="How many times to run each query. Default: 3.",
+        default=15,
+        help="How many times to run each query. Default: 15.",
     )
     parser.add_argument(
         "--poll-interval-ms",
@@ -104,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--binary",
-        help="Path to a prebuilt collie-search binary. Default: target/release/collie-search.",
+        help="Path to a prebuilt collie binary. Default: target/release/collie.",
     )
     parser.add_argument(
         "--skip-build",
@@ -117,8 +103,17 @@ def parse_args() -> argparse.Namespace:
         help="Leave the daemon running after the benchmark completes.",
     )
     parser.add_argument(
+        "--skip-incremental",
+        action="store_true",
+        help="Skip incremental watcher latency checks.",
+    )
+    parser.add_argument(
         "--output",
         help="Where to write the JSON result. Default: benchmark-results/<timestamp>-<repo>.json",
+    )
+    parser.add_argument(
+        "--state-dir",
+        help="Set COLLIE_STATE_DIR for an isolated benchmark cache/index location.",
     )
     return parser.parse_args()
 
@@ -138,12 +133,15 @@ def main() -> int:
         print("error: --search-runs must be >= 1", file=sys.stderr)
         return 1
 
+    if args.state_dir:
+        os.environ["COLLIE_STATE_DIR"] = str(Path(args.state_dir).expanduser().resolve())
+
     queries = args.queries or list(DEFAULT_QUERIES)
     binary = resolve_binary(collie_root, args.binary, args.skip_build)
     output_path = resolve_output_path(collie_root, target_repo, args.output)
 
     stop_daemon(binary, target_repo)
-    reset_collie_state(target_repo)
+    reset_collie_state(binary, target_repo)
 
     result = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -163,6 +161,7 @@ def main() -> int:
             "search_runs": args.search_runs,
             "poll_interval_ms": args.poll_interval_ms,
             "timeout_seconds": args.timeout_seconds,
+            "collie_state_dir": os.environ.get("COLLIE_STATE_DIR"),
         },
         "metrics": {},
     }
@@ -204,6 +203,7 @@ def main() -> int:
                 {
                     "query": query,
                     "runs_ms": durations,
+                    "summary_ms": latency_stats(durations),
                     "avg_ms": round(statistics.fmean(durations), 2),
                     "min_ms": min(durations),
                     "max_ms": max(durations),
@@ -212,16 +212,19 @@ def main() -> int:
             )
         result["metrics"]["searches"] = search_metrics
 
-        incremental_file = resolve_incremental_file(target_repo, args.incremental_file)
-        incremental = measure_incremental_latency(
-            binary=binary,
-            collie_root=collie_root,
-            target_repo=target_repo,
-            relative_file=incremental_file,
-            poll_interval_ms=args.poll_interval_ms,
-            timeout_seconds=args.timeout_seconds,
-        )
-        result["metrics"]["incremental_update"] = incremental
+        if args.skip_incremental:
+            result["metrics"]["incremental_update"] = None
+        else:
+            incremental_file = resolve_incremental_file(target_repo, args.incremental_file)
+            incremental = measure_incremental_latency(
+                binary=binary,
+                collie_root=collie_root,
+                target_repo=target_repo,
+                relative_file=incremental_file,
+                poll_interval_ms=args.poll_interval_ms,
+                timeout_seconds=args.timeout_seconds,
+            )
+            result["metrics"]["incremental_update"] = incremental
     except Exception as exc:
         exit_code = 1
         result["error"] = str(exc)
@@ -239,10 +242,10 @@ def resolve_binary(collie_root: Path, binary_arg: str | None, skip_build: bool) 
     if binary_arg:
         binary = Path(binary_arg).expanduser().resolve()
     else:
-        binary = collie_root / "target" / "release" / "collie-search"
+        binary = collie_root / "target" / "release" / "collie"
     if not skip_build:
         subprocess.run(
-            ["cargo", "build", "--release", "--bin", "collie-search"],
+            ["cargo", "build", "--release", "--bin", "collie"],
             cwd=collie_root,
             check=True,
         )
@@ -296,17 +299,13 @@ def stop_daemon(binary: Path, target_repo: Path) -> None:
     )
 
 
-def reset_collie_state(target_repo: Path) -> None:
-    collie_dir = target_repo / ".collie"
-    if not collie_dir.exists():
-        return
-    for name in RESET_STATE_FILES:
-        path = collie_dir / name
-        if path.exists():
-            if path.is_dir():
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                path.unlink(missing_ok=True)
+def reset_collie_state(binary: Path, target_repo: Path) -> None:
+    subprocess.run(
+        [str(binary), "clean", str(target_repo)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 def count_files_with_rg(repo: Path) -> int:
@@ -372,6 +371,30 @@ def parse_search_result_count(stdout: str) -> int:
     if "No results found for pattern:" in stdout:
         return 0
     return -1
+
+
+def latency_stats(values: list[float]) -> dict[str, float]:
+    sorted_values = sorted(float(v) for v in values)
+    return {
+        "min": round(sorted_values[0], 2),
+        "max": round(sorted_values[-1], 2),
+        "mean": round(statistics.fmean(sorted_values), 2),
+        "p50": round(percentile(sorted_values, 50), 2),
+        "p95": round(percentile(sorted_values, 95), 2),
+        "p99": round(percentile(sorted_values, 99), 2),
+    }
+
+
+def percentile(sorted_values: list[float], p: float) -> float:
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = (len(sorted_values) - 1) * (p / 100.0)
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return sorted_values[lower]
+    frac = rank - lower
+    return sorted_values[lower] * (1.0 - frac) + sorted_values[upper] * frac
 
 
 def resolve_incremental_file(repo: Path, file_arg: str | None) -> str:
@@ -501,10 +524,14 @@ def poll_for_query_count(
         completed = subprocess.run(
             [str(binary), "search", query, "--no-snippets", "-n", "20"],
             cwd=target_repo,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
         )
+        if completed.returncode not in (0, 1):
+            raise RuntimeError(
+                f"search command failed while polling query {query!r}: {completed.stderr.strip()}"
+            )
         count = parse_search_result_count(completed.stdout)
         if exact_zero:
             if count == 0:
@@ -545,19 +572,24 @@ def print_summary(output_path: Path, result: dict[str, object]) -> None:
         print(f"Skipped files during rebuild: {status['skipped_files']}")
     print("Queries:")
     for search in metrics["searches"]:
+        summary = search["summary_ms"]
         print(
             f"  {search['query']}: "
-            f"avg {search['avg_ms']} ms "
-            f"(min {search['min_ms']}, max {search['max_ms']}), "
+            f"p50 {summary['p50']} ms "
+            f"(p95 {summary['p95']}, p99 {summary['p99']}, "
+            f"min {summary['min']}, max {summary['max']}), "
             f"results {search['result_count']}"
         )
     incremental = metrics["incremental_update"]
-    print(
-        "Incremental watcher: "
-        f"{incremental['file']} "
-        f"(add {incremental['add_visible_ms']} ms, "
-        f"remove {incremental['remove_visible_ms']} ms)"
-    )
+    if incremental is None:
+        print("Incremental watcher: skipped")
+    else:
+        print(
+            "Incremental watcher: "
+            f"{incremental['file']} "
+            f"(add {incremental['add_visible_ms']} ms, "
+            f"remove {incremental['remove_visible_ms']} ms)"
+        )
 
 
 if __name__ == "__main__":

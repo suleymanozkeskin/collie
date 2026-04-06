@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::config::CollieConfig;
 use crate::indexer::tokenizer::tokenize_query;
@@ -34,6 +35,22 @@ struct ParsedPattern {
 
 const REGEX_CANDIDATE_MIN_BUDGET: usize = 100;
 const REGEX_CANDIDATE_OVERSAMPLE: usize = 4;
+const REGEX_VERIFY_PARALLEL_THRESHOLD: usize = 8;
+const REGEX_VERIFY_CHUNK_CAP: usize = 64;
+
+enum ExhaustiveRegexCandidates {
+    Shared(Arc<[SearchResult]>),
+    Owned(Vec<SearchResult>),
+}
+
+impl ExhaustiveRegexCandidates {
+    fn as_slice(&self) -> &[SearchResult] {
+        match self {
+            Self::Shared(files) => files,
+            Self::Owned(files) => files,
+        }
+    }
+}
 
 /// Tokenize a query pattern and determine search mode.
 ///
@@ -303,6 +320,21 @@ impl IndexBuilder {
         }
     }
 
+    /// Count files matching a token/wildcard pattern.
+    pub fn count_pattern(&self, pattern: &str) -> usize {
+        let parsed = match parse_file_pattern(pattern) {
+            Some(p) => p,
+            None => return 0,
+        };
+        match parsed.mode {
+            PatternMode::Exact => self.tantivy.count_exact(&parsed.tokens[0]),
+            PatternMode::Prefix => self.tantivy.count_prefix(&parsed.tokens[0]),
+            PatternMode::Suffix => self.tantivy.count_suffix(&parsed.tokens[0]),
+            PatternMode::Substring => self.tantivy.count_substring(&parsed.tokens[0]),
+            PatternMode::MultiTerm => self.tantivy.count_multi_term(&parsed.tokens),
+        }
+    }
+
     /// Search symbols using structured filters.
     pub fn search_symbols(&self, query: &SymbolQuery, limit: usize) -> Result<Vec<SymbolResult>> {
         self.tantivy.search_symbols(query, limit)
@@ -320,12 +352,6 @@ impl IndexBuilder {
         ignore_case: bool,
         collect_matches: bool,
     ) -> Result<Vec<RegexSearchResult>> {
-        let regex = regex::RegexBuilder::new(pattern)
-            .multi_line(true)
-            .dot_matches_new_line(multiline)
-            .case_insensitive(ignore_case)
-            .build()
-            .with_context(|| format!("invalid regex: {}", pattern))?;
         let exhaustive_matcher = grep_regex::RegexMatcherBuilder::new()
             .multi_line(true)
             .dot_matches_new_line(multiline)
@@ -359,7 +385,7 @@ impl IndexBuilder {
             for exact_candidate in &exact_candidates {
                 new_candidates += self.process_regex_candidates(
                     self.search_exact_candidate_ranked(exact_candidate, budget),
-                    &regex,
+                    &exhaustive_matcher,
                     multiline,
                     collect_matches,
                     limit,
@@ -374,7 +400,7 @@ impl IndexBuilder {
             for candidates in self.regex_candidate_passes_ranked(&candidate_query, budget) {
                 new_candidates += self.process_regex_candidates(
                     candidates,
-                    &regex,
+                    &exhaustive_matcher,
                     multiline,
                     collect_matches,
                     limit,
@@ -400,6 +426,31 @@ impl IndexBuilder {
         Ok(results)
     }
 
+    /// Count files matching a regex pattern across the full indexed corpus.
+    pub fn count_regex(
+        &self,
+        pattern: &str,
+        multiline: bool,
+        ignore_case: bool,
+    ) -> Result<usize> {
+        let exhaustive_matcher = grep_regex::RegexMatcherBuilder::new()
+            .multi_line(true)
+            .dot_matches_new_line(multiline)
+            .case_insensitive(ignore_case)
+            .build(pattern)
+            .with_context(|| format!("invalid regex: {}", pattern))?;
+
+        let exact_candidates = regex_search::extract_exact_candidates(pattern);
+        let candidate_query = regex_search::extract_candidate_query(pattern);
+
+        Ok(self.count_regex_exhaustive(
+            &exhaustive_matcher,
+            &exact_candidates,
+            &candidate_query,
+            multiline,
+        ))
+    }
+
     fn search_regex_exhaustive(
         &self,
         matcher: &RegexMatcher,
@@ -408,13 +459,32 @@ impl IndexBuilder {
         multiline: bool,
         collect_matches: bool,
     ) -> Vec<RegexSearchResult> {
+        let candidates = self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
+        self.verify_regex_parallel(candidates.as_slice(), matcher, multiline, collect_matches)
+    }
+
+    fn count_regex_exhaustive(
+        &self,
+        matcher: &RegexMatcher,
+        exact_candidates: &[ExactCandidate],
+        candidate_query: &CandidateQuery,
+        multiline: bool,
+    ) -> usize {
+        let candidates = self.collect_exhaustive_regex_candidates(exact_candidates, candidate_query);
+        self.count_regex_parallel(candidates.as_slice(), matcher, multiline)
+    }
+
+    fn collect_exhaustive_regex_candidates(
+        &self,
+        exact_candidates: &[ExactCandidate],
+        candidate_query: &CandidateQuery,
+    ) -> ExhaustiveRegexCandidates {
         let total_files = self.tantivy.file_count();
         let use_all_files =
             self.should_bypass_exhaustive_narrowing(total_files, exact_candidates, candidate_query);
 
         if use_all_files {
-            let files = self.tantivy.list_all_files_shared();
-            return self.verify_regex_parallel(&files, matcher, multiline, collect_matches);
+            return ExhaustiveRegexCandidates::Shared(self.tantivy.list_all_files_shared());
         }
 
         let mut seen = HashSet::new();
@@ -438,13 +508,11 @@ impl IndexBuilder {
             }
         }
 
-        // If narrowing still produced most files, use cached all-files instead.
         if total_files > 0 && candidates.len() * 100 >= total_files * 25 {
-            let files = self.tantivy.list_all_files_shared();
-            return self.verify_regex_parallel(&files, matcher, multiline, collect_matches);
+            return ExhaustiveRegexCandidates::Shared(self.tantivy.list_all_files_shared());
         }
 
-        self.verify_regex_parallel(&candidates, matcher, multiline, collect_matches)
+        ExhaustiveRegexCandidates::Owned(candidates)
     }
 
     fn verify_regex_parallel(
@@ -488,6 +556,29 @@ impl IndexBuilder {
             .collect();
         results.sort_by(|a, b| a.file_path.cmp(&b.file_path));
         results
+    }
+
+    fn count_regex_parallel(
+        &self,
+        files: &[SearchResult],
+        matcher: &RegexMatcher,
+        multiline: bool,
+    ) -> usize {
+        files.par_iter()
+            .map_init(
+                || regex_search::build_regex_searcher(multiline),
+                |searcher, candidate| {
+                    usize::from(
+                        regex_search::file_has_regex_match_with_searcher(
+                            &candidate.file_path,
+                            matcher,
+                            searcher,
+                        )
+                        .unwrap_or(false),
+                    )
+                },
+            )
+            .sum()
     }
 
     fn should_bypass_exhaustive_narrowing(
@@ -619,7 +710,7 @@ impl IndexBuilder {
     fn process_regex_candidates(
         &self,
         candidates: Vec<SearchResult>,
-        regex: &regex::Regex,
+        matcher: &RegexMatcher,
         multiline: bool,
         collect_matches: bool,
         limit: usize,
@@ -628,38 +719,115 @@ impl IndexBuilder {
     ) -> usize {
         let mut new_candidates = 0usize;
 
-        for candidate in candidates {
-            if !seen_candidates.insert(candidate.file_path.clone()) {
-                continue;
-            }
-            new_candidates += 1;
+        let chunk_size = limit
+            .max(1)
+            .min(REGEX_VERIFY_CHUNK_CAP);
 
+        for candidate_chunk in candidates.chunks(chunk_size) {
             if limit > 0 && results.len() >= limit {
                 break;
             }
 
-            if collect_matches {
-                if let Some(file_matches) =
-                    regex_search::apply_regex_to_file(&candidate.file_path, regex, multiline)
-                {
-                    if !file_matches.is_empty() {
-                        results.push(RegexSearchResult {
-                            file_path: candidate.file_path,
-                            matches: file_matches,
-                        });
-                    }
+            let mut pending = Vec::with_capacity(candidate_chunk.len());
+            for candidate in candidate_chunk {
+                if seen_candidates.insert(candidate.file_path.clone()) {
+                    pending.push(candidate.clone());
                 }
-            } else if regex_search::file_has_regex_match(&candidate.file_path, regex, multiline)
-                .unwrap_or(false)
-            {
-                results.push(RegexSearchResult {
-                    file_path: candidate.file_path,
-                    matches: Vec::new(),
-                });
+            }
+            new_candidates += pending.len();
+
+            if pending.is_empty() {
+                continue;
+            }
+
+            let verified = self.verify_regex_chunk(
+                &pending,
+                matcher,
+                multiline,
+                collect_matches,
+            );
+
+            for result in verified.into_iter().flatten() {
+                results.push(result);
+                if limit > 0 && results.len() >= limit {
+                    return new_candidates;
+                }
             }
         }
 
         new_candidates
+    }
+
+    fn verify_regex_chunk(
+        &self,
+        candidates: &[SearchResult],
+        matcher: &RegexMatcher,
+        multiline: bool,
+        collect_matches: bool,
+    ) -> Vec<Option<RegexSearchResult>> {
+        if candidates.len() < REGEX_VERIFY_PARALLEL_THRESHOLD {
+            let mut searcher = regex_search::build_regex_searcher(multiline);
+            let mut verified = Vec::with_capacity(candidates.len());
+            for candidate in candidates {
+                let result = if collect_matches {
+                    regex_search::apply_regex_to_file_with_searcher(
+                        &candidate.file_path,
+                        matcher,
+                        &mut searcher,
+                    )
+                    .filter(|matches| !matches.is_empty())
+                    .map(|matches| RegexSearchResult {
+                        file_path: candidate.file_path.clone(),
+                        matches,
+                    })
+                } else {
+                    regex_search::file_has_regex_match_with_searcher(
+                        &candidate.file_path,
+                        matcher,
+                        &mut searcher,
+                    )
+                    .filter(|matched| *matched)
+                    .map(|_| RegexSearchResult {
+                        file_path: candidate.file_path.clone(),
+                        matches: Vec::new(),
+                    })
+                };
+                verified.push(result);
+            }
+            return verified;
+        }
+
+        candidates
+            .par_iter()
+            .map_init(
+                || regex_search::build_regex_searcher(multiline),
+                |searcher, candidate| {
+                    if collect_matches {
+                        regex_search::apply_regex_to_file_with_searcher(
+                            &candidate.file_path,
+                            matcher,
+                            searcher,
+                        )
+                        .filter(|matches| !matches.is_empty())
+                        .map(|matches| RegexSearchResult {
+                            file_path: candidate.file_path.clone(),
+                            matches,
+                        })
+                    } else {
+                        regex_search::file_has_regex_match_with_searcher(
+                            &candidate.file_path,
+                            matcher,
+                            searcher,
+                        )
+                        .filter(|matched| *matched)
+                        .map(|_| RegexSearchResult {
+                            file_path: candidate.file_path.clone(),
+                            matches: Vec::new(),
+                        })
+                    }
+                },
+            )
+            .collect()
     }
 
     /// Get index statistics. All values derived from the Tantivy index.
