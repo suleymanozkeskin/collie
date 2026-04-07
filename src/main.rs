@@ -244,6 +244,26 @@ enum Commands {
     /// Print the agent skill reference (search modes, JSON schema, workflows)
     Skill,
 
+    /// Write MCP server config for your editor/agent
+    ///
+    /// Detects the environment and writes the correct config file so
+    /// your editor can use Collie as an MCP tool server.
+    ///
+    /// Examples:
+    ///   collie mcp-setup               # auto-detect (defaults to Claude Code)
+    ///   collie mcp-setup --target claude
+    ///   collie mcp-setup --target vscode
+    #[command(name = "mcp-setup")]
+    McpSetup {
+        /// Repository path
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+
+        /// Target editor: "claude" or "vscode"
+        #[arg(long, default_value = "claude")]
+        target: String,
+    },
+
     /// Start an MCP (Model Context Protocol) server over stdio
     ///
     /// Exposes Collie's search capabilities as MCP tools for AI agents
@@ -368,6 +388,9 @@ fn run() -> anyhow::Result<i32> {
         }
         (Some(Commands::Skill), _) => {
             print!("{}", include_str!("../.agents/skills/SKILL.md"));
+        }
+        (Some(Commands::McpSetup { path, target }), _) => {
+            collie_search::cli::mcp_setup::run(path, &target)?;
         }
         (Some(Commands::McpServe { path }), _) => {
             collie_search::cli::mcp_serve::run(path)?;

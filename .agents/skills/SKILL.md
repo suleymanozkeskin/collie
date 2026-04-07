@@ -252,13 +252,29 @@ All tools return JSON with the same schema as `--format json` output. Parameters
 match CLI flags: `pattern`/`query`, `limit`, `glob`, `ignore_case`, `multiline`,
 `symbol_regex`.
 
-### Editor/agent configuration
+### Quick setup
 
-Claude Code (`settings.json`):
+```sh
+collie mcp-setup                     # writes .mcp.json for Claude Code (default)
+collie mcp-setup --target vscode     # writes .vscode/mcp.json for VS Code
+```
+
+This auto-detects the `collie` binary path, resolves the repo root, and writes
+the config file. Merges into existing config if present.
+
+### Manual configuration
+
+Claude Code (via CLI):
+```sh
+claude mcp add --transport stdio collie -- collie mcp-serve --path /path/to/repo
+```
+
+Or edit `.mcp.json` directly:
 ```json
 {
   "mcpServers": {
     "collie": {
+      "type": "stdio",
       "command": "collie",
       "args": ["mcp-serve", "--path", "/path/to/repo"]
     }
@@ -266,15 +282,13 @@ Claude Code (`settings.json`):
 }
 ```
 
-VS Code (MCP settings):
+VS Code (`.vscode/mcp.json`):
 ```json
 {
-  "mcp": {
-    "servers": {
-      "collie": {
-        "command": "collie",
-        "args": ["mcp-serve", "--path", "${workspaceFolder}"]
-      }
+  "servers": {
+    "collie": {
+      "command": "collie",
+      "args": ["mcp-serve", "--path", "${workspaceFolder}"]
     }
   }
 }
