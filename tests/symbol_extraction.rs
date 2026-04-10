@@ -337,7 +337,7 @@ fn ts_extracts_functions() {
     );
 
     let symbol = find_symbol(&symbols, SymbolKind::Function, "handleRequest");
-    assert_eq!(symbol.visibility.as_deref(), Some("pub"));
+    assert_eq!(symbol.visibility, None);
 }
 
 #[test]

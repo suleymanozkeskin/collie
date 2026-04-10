@@ -74,13 +74,27 @@ fn lang_aliases_normalized() {
         parse_query("lang:ts").language.as_deref(),
         Some("typescript")
     );
-    assert_eq!(
-        parse_query("lang:js").language.as_deref(),
-        Some("javascript")
-    );
     assert_eq!(parse_query("lang:rb").language.as_deref(), Some("ruby"));
-    assert_eq!(parse_query("lang:kt").language.as_deref(), Some("kotlin"));
     assert_eq!(parse_query("lang:cpp").language.as_deref(), Some("cpp"));
+    assert_eq!(parse_query("lang:cs").language.as_deref(), Some("csharp"));
+}
+
+#[test]
+fn unsupported_lang_filter_is_explicitly_invalid() {
+    let parsed = parse_query("kind:fn lang:js handler");
+    assert_eq!(parsed.kinds, vec![SymbolKind::Function, SymbolKind::Method]);
+    assert_eq!(
+        parsed.invalid_filter(),
+        Some("unsupported language filter: js")
+    );
+    assert_eq!(parsed.name_pattern, "");
+}
+
+#[test]
+fn unsupported_kind_filter_is_explicitly_invalid() {
+    let parsed = parse_query("kind:callable handler");
+    assert_eq!(parsed.invalid_filter(), Some("unsupported kind filter: callable"));
+    assert_eq!(parsed.name_pattern, "");
 }
 
 #[test]

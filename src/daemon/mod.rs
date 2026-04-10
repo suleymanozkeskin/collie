@@ -364,6 +364,7 @@ pub fn rebuild(path: PathBuf) -> Result<RebuildResult> {
     drop(builder);
     write_repo_snapshot(&gen_dir, &snapshot)?;
 
+    gen_mgr.write_schema_version(&gen_dir)?;
     gen_mgr.activate(&gen_dir)?;
     gen_mgr.cleanup_inactive()?;
 
@@ -541,6 +542,7 @@ fn run_daemon(paths: &DaemonPaths) -> Result<()> {
             (skips, stats)
         };
 
+        gen_mgr.write_schema_version(&gen_dir)?;
         gen_mgr.activate(&gen_dir)?;
         gen_mgr.cleanup_inactive()?;
         (gen_dir, skips, stats)

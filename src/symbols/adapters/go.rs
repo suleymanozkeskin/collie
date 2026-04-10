@@ -86,7 +86,7 @@ fn walk_go(
                 if let Some(type_node) = node.child_by_field_name("type") {
                     match type_node.kind() {
                         "struct_type" => {
-                            symbols.push(helpers::make_symbol(
+                            let mut sym = helpers::make_symbol(
                                 SymbolKind::Struct,
                                 name,
                                 path,
@@ -95,20 +95,28 @@ fn walk_go(
                                 None,
                                 Some(helpers::go_visibility(name)),
                                 "go",
-                            ));
+                            );
+                            sym.signature =
+                                Some(helpers::extract_header_before_brace(node, source));
+                            symbols.push(sym);
                             extract_go_struct_fields(type_node, source, path, symbols, name);
                             return;
                         }
-                        "interface_type" => symbols.push(helpers::make_symbol(
-                            SymbolKind::Interface,
-                            name,
-                            path,
-                            node,
-                            source,
-                            None,
-                            Some(helpers::go_visibility(name)),
-                            "go",
-                        )),
+                        "interface_type" => {
+                            let mut sym = helpers::make_symbol(
+                                SymbolKind::Interface,
+                                name,
+                                path,
+                                node,
+                                source,
+                                None,
+                                Some(helpers::go_visibility(name)),
+                                "go",
+                            );
+                            sym.signature =
+                                Some(helpers::extract_header_before_brace(node, source));
+                            symbols.push(sym);
+                        }
                         _ => symbols.push(helpers::make_symbol(
                             SymbolKind::TypeAlias,
                             name,

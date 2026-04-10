@@ -332,6 +332,7 @@ fn search_migrates_legacy_repo_local_runtime_state() -> Result<()> {
     let mut builder = IndexBuilder::new(&gen_dir, &CollieConfig::default())?;
     builder.index_file(&source)?;
     builder.save()?;
+    mgr.write_schema_version(&gen_dir)?;
     mgr.activate(&gen_dir)?;
 
     let output = run_collie(worktree.path(), &["-s", "migrated_result"])?;

@@ -618,6 +618,10 @@ impl TantivyIndex {
 
     /// Search symbols using structured filters.
     pub fn search_symbols(&self, query: &SymbolQuery, limit: usize) -> Result<Vec<SymbolResult>> {
+        if let Some(message) = query.invalid_filter() {
+            anyhow::bail!(message.to_string());
+        }
+
         let mut subqueries: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
 
         subqueries.push((

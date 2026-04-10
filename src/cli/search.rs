@@ -134,6 +134,10 @@ pub fn run(args: SearchArgs) -> Result<bool> {
         .map(|g| glob::Pattern::new(g).with_context(|| format!("invalid glob pattern: {}", g)))
         .transpose()?;
 
+    if let Some(message) = symbol_query.invalid_filter() {
+        anyhow::bail!(message.to_string());
+    }
+
     if !crate::daemon::is_daemon_alive(&worktree_root) {
         // Only warn if the index may actually be stale. After a clean rebuild
         // with no daemon, the index is perfectly valid — no need to alarm.

@@ -34,6 +34,7 @@ impl LanguageAdapter for TypeScriptAdapter {
             path,
             &mut symbols,
             false,
+            None,
         );
         symbols
     }
@@ -45,10 +46,11 @@ fn walk_typescript(
     path: &Path,
     symbols: &mut Vec<Symbol>,
     exported: bool,
+    container: Option<&str>,
 ) {
     if node.kind() == "export_statement" {
         helpers::for_each_child(node, |child| {
-            walk_typescript(child, source, path, symbols, true);
+            walk_typescript(child, source, path, symbols, true, container);
         });
         return;
     }
@@ -62,19 +64,41 @@ fn walk_typescript(
                     path,
                     node,
                     source,
-                    exported,
+                    container,
                 ));
             }
         }
         "class_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let name = helpers::text(name_node, source);
                 symbols.push(make_ts_symbol(
                     SymbolKind::Class,
+                    name,
+                    path,
+                    node,
+                    source,
+                    None,
+                ));
+                helpers::for_each_child(node, |child| {
+                    walk_typescript(child, source, path, symbols, exported, Some(name));
+                });
+                return;
+            }
+        }
+        "method_definition" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let kind = if container.is_some() {
+                    SymbolKind::Method
+                } else {
+                    SymbolKind::Function
+                };
+                symbols.push(make_ts_symbol(
+                    kind,
                     helpers::text(name_node, source),
                     path,
                     node,
                     source,
-                    exported,
+                    container,
                 ));
             }
         }
@@ -86,7 +110,7 @@ fn walk_typescript(
                     path,
                     node,
                     source,
-                    exported,
+                    container,
                 ));
             }
         }
@@ -98,7 +122,7 @@ fn walk_typescript(
                     path,
                     node,
                     source,
-                    exported,
+                    container,
                 ));
             }
         }
@@ -110,7 +134,7 @@ fn walk_typescript(
                     path,
                     node,
                     source,
-                    exported,
+                    container,
                 ));
             }
         }
@@ -122,7 +146,7 @@ fn walk_typescript(
                     path,
                     node,
                     source,
-                    exported,
+                    container,
                 ));
             }
         }
@@ -130,7 +154,7 @@ fn walk_typescript(
     }
 
     helpers::for_each_child(node, |child| {
-        walk_typescript(child, source, path, symbols, exported);
+        walk_typescript(child, source, path, symbols, exported, container);
     });
 }
 
@@ -140,16 +164,7 @@ fn make_ts_symbol(
     path: &Path,
     node: Node<'_>,
     source: &[u8],
-    exported: bool,
+    container: Option<&str>,
 ) -> Symbol {
-    helpers::make_symbol(
-        kind,
-        name,
-        path,
-        node,
-        source,
-        None,
-        Some(if exported { "pub" } else { "private" }),
-        "typescript",
-    )
+    helpers::make_symbol(kind, name, path, node, source, container, None, "typescript")
 }

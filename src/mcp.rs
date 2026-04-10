@@ -302,6 +302,9 @@ impl CollieServer {
         let limit = params.limit.unwrap_or(config.search.default_limit);
 
         let symbol_query = parse_query(&params.query);
+        if let Some(message) = symbol_query.invalid_filter() {
+            return Err(McpError::invalid_params(message.to_string(), None));
+        }
         if !symbol_query.has_filters() {
             return Err(McpError::invalid_params(
                 "query must contain at least one symbol filter (e.g. kind:fn, lang:go)",

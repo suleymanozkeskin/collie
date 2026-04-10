@@ -15,8 +15,8 @@ pub fn parse_query(input: &str) -> SymbolQuery {
             "kind" => {
                 let kinds = normalize_kinds(value);
                 if kinds.is_empty() {
-                    name_start = idx;
-                    break;
+                    query.invalid_filter = Some(format!("unsupported kind filter: {value}"));
+                    return query;
                 }
                 query.kinds = kinds;
             }
@@ -24,8 +24,8 @@ pub fn parse_query(input: &str) -> SymbolQuery {
                 if let Some(language) = normalize_language(value) {
                     query.language = Some(language);
                 } else {
-                    name_start = idx;
-                    break;
+                    query.invalid_filter = Some(format!("unsupported language filter: {value}"));
+                    return query;
                 }
             }
             "path" => {
@@ -81,14 +81,10 @@ pub fn normalize_language(value: &str) -> Option<String> {
         "rust" | "rs" => Some("rust".to_string()),
         "python" | "py" => Some("python".to_string()),
         "typescript" | "ts" => Some("typescript".to_string()),
-        "javascript" | "js" => Some("javascript".to_string()),
         "java" => Some("java".to_string()),
         "c" => Some("c".to_string()),
         "cpp" => Some("cpp".to_string()),
         "ruby" | "rb" => Some("ruby".to_string()),
-        "php" => Some("php".to_string()),
-        "swift" => Some("swift".to_string()),
-        "kotlin" | "kt" => Some("kotlin".to_string()),
         "csharp" | "cs" => Some("csharp".to_string()),
         "zig" => Some("zig".to_string()),
         _ => None,

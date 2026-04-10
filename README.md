@@ -61,7 +61,7 @@ collie search 'kind:fn lang:go path:pkg/api/ init'
 
 **Supported kinds:** function, method, class, struct, enum, interface, trait, variable, field, constant, module, type_alias, import
 
-**Supported languages:** go, rust, python, typescript
+**Supported languages:** go, rust, python, typescript, java, c, cpp, csharp, ruby, zig
 
 ### Regex search
 Full regex with index acceleration. Use `-e` flag.
@@ -98,7 +98,7 @@ collie search -e 'TODO|FIXME' --format json -g '*.go'
       "kind": "function",
       "name": "handler",
       "language": "go",
-      "signature": "func handler() { ... }"
+      "signature": "func handler()"
     }
   ]
 }

@@ -126,6 +126,7 @@ pub fn build_index(root: &Path, files: &[(&str, &str)]) -> Result<()> {
     }
     builder.save()?;
 
+    mgr.write_schema_version(&gen_dir)?;
     mgr.activate(&gen_dir)?;
     Ok(())
 }

@@ -3,6 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Bump this whenever symbol extraction semantics change in a way that makes
+/// stored index data incorrect (e.g. signature format change).
+pub const SYMBOL_SCHEMA_VERSION: u32 = 2;
+
+const SCHEMA_VERSION_FILE: &str = "SCHEMA_VERSION";
+
 pub struct GenerationManager {
     collie_dir: PathBuf,
 }
@@ -118,10 +124,29 @@ impl GenerationManager {
     /// Returns true if a full rebuild is needed:
     /// - CURRENT missing, corrupt, or points to nonexistent generation
     /// - Active generation has ACTIVE_DIRTY marker
+    /// - Active generation has a stale or missing schema version
     pub fn needs_rebuild(&self) -> bool {
         match self.active_generation() {
-            Ok(Some(gen_dir)) => self.dirty_marker(&gen_dir).exists(),
+            Ok(Some(gen_dir)) => {
+                self.dirty_marker(&gen_dir).exists() || !self.schema_version_matches(&gen_dir)
+            }
             _ => true,
+        }
+    }
+
+    /// Write the current schema version to a generation directory.
+    pub fn write_schema_version(&self, gen_dir: &Path) -> Result<()> {
+        let path = gen_dir.join(SCHEMA_VERSION_FILE);
+        fs::write(&path, SYMBOL_SCHEMA_VERSION.to_string())
+            .context("failed to write SCHEMA_VERSION")
+    }
+
+    /// Check if a generation's schema version matches the current code.
+    pub fn schema_version_matches(&self, gen_dir: &Path) -> bool {
+        let path = gen_dir.join(SCHEMA_VERSION_FILE);
+        match fs::read_to_string(&path) {
+            Ok(content) => content.trim().parse::<u32>().ok() == Some(SYMBOL_SCHEMA_VERSION),
+            Err(_) => false,
         }
     }
 }

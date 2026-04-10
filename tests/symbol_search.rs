@@ -128,6 +128,29 @@ fn search_with_name_wildcard() -> Result<()> {
 }
 
 #[test]
+fn search_rejects_unsupported_language_filter() -> Result<()> {
+    let worktree = create_worktree()?;
+    let file = write_file(
+        worktree.path(),
+        "pkg/api/handler.go",
+        "package api\n\nfunc handler() {}\n",
+    )?;
+    let (_gen_dir, mut builder) = setup_builder(worktree.path())?;
+
+    builder.index_file(&file)?;
+    builder.save()?;
+
+    let err = builder
+        .search_symbols(&parse_query("kind:fn lang:js handler"), 0)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("unsupported language filter: js"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn search_with_qualified_name_filter() -> Result<()> {
     let worktree = create_worktree()?;
     let file = write_file(

@@ -33,6 +33,7 @@ impl LanguageAdapter for CppAdapter {
             path,
             &mut symbols,
             None,
+            false,
         );
         symbols
     }
@@ -44,12 +45,13 @@ fn walk_cpp(
     path: &Path,
     symbols: &mut Vec<Symbol>,
     container: Option<&str>,
+    in_type_scope: bool,
 ) {
     match node.kind() {
         "function_definition" => {
             if let Some(declarator) = node.child_by_field_name("declarator") {
                 if let Some(name_node) = find_identifier(&declarator) {
-                    let kind = if container.is_some() {
+                    let kind = if in_type_scope {
                         SymbolKind::Method
                     } else {
                         SymbolKind::Function
@@ -81,7 +83,7 @@ fn walk_cpp(
                     "cpp",
                 ));
                 for_each_child(node, |child| {
-                    walk_cpp(child, source, path, symbols, Some(name));
+                    walk_cpp(child, source, path, symbols, Some(name), true);
                 });
                 return;
             }
@@ -100,7 +102,7 @@ fn walk_cpp(
                     "cpp",
                 ));
                 for_each_child(node, |child| {
-                    walk_cpp(child, source, path, symbols, Some(name));
+                    walk_cpp(child, source, path, symbols, Some(name), true);
                 });
                 return;
             }
@@ -133,7 +135,7 @@ fn walk_cpp(
                     "cpp",
                 ));
                 for_each_child(node, |child| {
-                    walk_cpp(child, source, path, symbols, Some(name));
+                    walk_cpp(child, source, path, symbols, Some(name), false);
                 });
                 return;
             }
@@ -188,7 +190,7 @@ fn walk_cpp(
     }
 
     for_each_child(node, |child| {
-        walk_cpp(child, source, path, symbols, container)
+        walk_cpp(child, source, path, symbols, container, in_type_scope)
     });
 }
 

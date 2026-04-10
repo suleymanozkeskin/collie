@@ -84,6 +84,7 @@ pub struct SymbolQuery {
     pub path_prefix: Option<String>,
     pub name_pattern: String,
     pub qualified_name_pattern: Option<String>,
+    pub invalid_filter: Option<String>,
 }
 
 impl SymbolQuery {
@@ -92,5 +93,9 @@ impl SymbolQuery {
             || self.language.is_some()
             || self.path_prefix.is_some()
             || self.qualified_name_pattern.is_some()
+    }
+
+    pub fn invalid_filter(&self) -> Option<&str> {
+        self.invalid_filter.as_deref()
     }
 }

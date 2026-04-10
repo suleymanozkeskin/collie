@@ -58,6 +58,59 @@ pub fn go_visibility(name: &str) -> &'static str {
         .unwrap_or("private")
 }
 
+/// Extract declaration header from a node, excluding the body.
+///
+/// If the node has a tree-sitter `body` field, returns text from node start
+/// up to (but not including) the body. Otherwise returns the full node text.
+///
+/// This is safe for all node kinds. It does NOT use brace-based heuristics
+/// because some declarations contain braces in their header (e.g. TypeScript
+/// `type Handler = { run(): void }`). Adapters that need brace-based
+/// truncation for nodes without a `body` field should call
+/// `extract_header_before_brace` explicitly.
+pub fn extract_header(node: Node<'_>, source: &[u8]) -> String {
+    if let Some(body) = node.child_by_field_name("body") {
+        let start = node.start_byte();
+        let end = body.start_byte();
+        if end > start {
+            if let Ok(header) = std::str::from_utf8(&source[start..end]) {
+                let trimmed = header.trim_end();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    text(node, source).to_string()
+}
+
+/// Like `extract_header`, but with a second strategy: if no `body` field
+/// exists, slices before the first `{`. Use only when the grammar guarantees
+/// no braces appear in the declaration header (e.g. Go `type_spec` with
+/// struct/interface, C/C++ enum_specifier).
+pub fn extract_header_before_brace(node: Node<'_>, source: &[u8]) -> String {
+    if let Some(body) = node.child_by_field_name("body") {
+        let start = node.start_byte();
+        let end = body.start_byte();
+        if end > start {
+            if let Ok(header) = std::str::from_utf8(&source[start..end]) {
+                let trimmed = header.trim_end();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    let full = text(node, source);
+    if let Some(brace_pos) = full.find('{') {
+        let header = full[..brace_pos].trim_end();
+        if !header.is_empty() {
+            return header.to_string();
+        }
+    }
+    full.to_string()
+}
+
 pub fn make_symbol(
     kind: SymbolKind,
     name: &str,
@@ -78,7 +131,7 @@ pub fn make_symbol(
         repo_rel_path: PathBuf::from(path),
         container_name: container_name.map(|s| s.to_string()),
         visibility: visibility.map(|s| s.to_string()),
-        signature: Some(text(node, source).to_string()),
+        signature: Some(extract_header(node, source)),
         line_start: (start.row + 1) as u32,
         line_end: (end.row + 1) as u32,
         byte_start: node.start_byte() as u32,
