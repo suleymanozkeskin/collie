@@ -867,7 +867,7 @@
 
                 <!-- ==================== THE PROBLEM ==================== -->
                 <section>
-                    <h2>Search doesn't scale</h2>
+                    <h2>Under optimised search</h2>
                     <p
                         style="
                             font-size: 0.7em;
@@ -875,8 +875,8 @@
                             margin-bottom: 0.6em;
                         "
                     >
-                        ripgrep on a 29K-file repo (Kubernetes). Every query
-                        re-scans every file.
+                        ripgrep on a 29K-file repo (Kubernetes). Each query
+                        re-walks and re-searches candidate files.
                     </p>
                     <div class="problem-stack">
                         <div class="problem-row">
@@ -887,7 +887,7 @@
                                 >
                             </div>
                             <div class="problem-time problem-slow">
-                                357&ndash;877 ms
+                                744&ndash;878 ms
                             </div>
                             <div class="problem-note">
                                 Full scan, varies with cache
@@ -901,7 +901,7 @@
                                 >
                             </div>
                             <div class="problem-time problem-slow">
-                                372&ndash;561 ms
+                                403&ndash;610 ms
                             </div>
                             <div class="problem-note">
                                 Same cost, different query
@@ -914,7 +914,7 @@
                                     search "kubelet"</code
                                 >
                             </div>
-                            <div class="problem-time problem-fast">13 ms</div>
+                            <div class="problem-time problem-fast">12 ms</div>
                             <div class="problem-note">
                                 Index lookup, every time
                             </div>
@@ -927,8 +927,9 @@
                             margin-top: 0.8em;
                         "
                     >
-                        rg varies 2&ndash;3x across runs. Collie stays under 15
-                        ms.<br />
+                        Fresh run on the current build: rg still lands in the
+                        400&ndash;880 ms range. Collie stayed under 14 ms on
+                        the lexical sample.<br />
                         grep/rg also have no understanding of code structure.
                         Just raw text.
                     </p>
@@ -949,8 +950,10 @@
                     </p>
                     <div class="stat-row">
                         <div class="stat-box">
-                            <div class="num">~13ms</div>
-                            <div class="label">Search latency on 29K files</div>
+                            <div class="num">~10ms</div>
+                            <div class="label">
+                                Typical lexical latency on 29K files
+                            </div>
                         </div>
                         <div class="stat-box">
                             <div class="num">11</div>
@@ -1197,55 +1200,55 @@
                         <tbody>
                             <tr>
                                 <td><code>kubelet</code></td>
-                                <td class="num">13 ms</td>
-                                <td class="num">357&ndash;877 ms</td>
-                                <td class="num speedup">27&ndash;67x</td>
+                                <td class="num">12 ms</td>
+                                <td class="num">744&ndash;878 ms</td>
+                                <td class="num speedup">63&ndash;74x</td>
                             </tr>
                             <tr>
                                 <td><code>context</code></td>
-                                <td class="num">13 ms</td>
-                                <td class="num">372&ndash;561 ms</td>
-                                <td class="num speedup">29&ndash;43x</td>
+                                <td class="num">7 ms</td>
+                                <td class="num">403&ndash;610 ms</td>
+                                <td class="num speedup">58&ndash;88x</td>
                             </tr>
                             <tr>
                                 <td><code>controller</code></td>
-                                <td class="num">9 ms</td>
-                                <td class="num">333&ndash;622 ms</td>
-                                <td class="num speedup">37&ndash;69x</td>
+                                <td class="num">7 ms</td>
+                                <td class="num">398&ndash;427 ms</td>
+                                <td class="num speedup">56&ndash;60x</td>
                             </tr>
                             <tr>
                                 <td>
                                     <code>kube%</code>
                                     <span class="dim">(prefix)</span>
                                 </td>
-                                <td class="num">11 ms</td>
-                                <td class="num">424&ndash;737 ms</td>
-                                <td class="num speedup">39&ndash;67x</td>
+                                <td class="num">8 ms</td>
+                                <td class="num">491&ndash;520 ms</td>
+                                <td class="num speedup">58&ndash;61x</td>
                             </tr>
                             <tr>
                                 <td>
                                     <code>%config</code>
                                     <span class="dim">(suffix)</span>
                                 </td>
-                                <td class="num">10 ms</td>
-                                <td class="num">347&ndash;909 ms</td>
-                                <td class="num speedup">35&ndash;91x</td>
+                                <td class="num">8 ms</td>
+                                <td class="num">401&ndash;422 ms</td>
+                                <td class="num speedup">48&ndash;51x</td>
                             </tr>
                             <tr>
                                 <td>
                                     <code>%request%</code>
                                     <span class="dim">(substring)</span>
                                 </td>
-                                <td class="num">119 ms</td>
-                                <td class="num">352&ndash;708 ms</td>
-                                <td class="num speedup">3&ndash;6x</td>
+                                <td class="num">104 ms</td>
+                                <td class="num">413&ndash;429 ms</td>
+                                <td class="num speedup">4x</td>
                             </tr>
                         </tbody>
                     </table>
                     <p style="font-size: 0.5em; color: #bbb; margin-top: 0.4em">
-                        ripgrep ranges measured across 23 benchmark sessions.
-                        Collie stays consistent; rg varies 2&ndash;3x with cache
-                        state.
+                        Fresh run on the current build, 5 measured runs per
+                        query. Collie stayed tight; rg still paid full-scan
+                        cost on every query.
                     </p>
                 </section>
 
@@ -1261,20 +1264,20 @@
                             <div class="bar-track">
                                 <div
                                     class="bar-fill collie"
-                                    style="width: 2%"
+                                    style="width: 1.5%"
                                 ></div>
                             </div>
-                            <div class="bar-value">13 ms</div>
+                            <div class="bar-value">12 ms</div>
                         </div>
                         <div class="bar-row">
                             <div class="bar-label dim">rg best</div>
                             <div class="bar-track">
                                 <div
                                     class="bar-fill rg"
-                                    style="width: 41%"
+                                    style="width: 85%"
                                 ></div>
                             </div>
-                            <div class="bar-value">357 ms</div>
+                            <div class="bar-value">744 ms</div>
                         </div>
                         <div class="bar-row">
                             <div class="bar-label dim">rg worst</div>
@@ -1284,11 +1287,11 @@
                                     style="width: 100%"
                                 ></div>
                             </div>
-                            <div class="bar-value">877 ms</div>
+                            <div class="bar-value">878 ms</div>
                         </div>
                     </div>
                     <div class="big-number accent">
-                        27&ndash;67x
+                        63&ndash;74x
                         <span style="font-size: 0.4em; color: #bbb"
                             >faster</span
                         >
@@ -1315,8 +1318,8 @@
                         <tbody>
                             <tr>
                                 <td><code>kind:fn handler</code></td>
-                                <td class="num">11 ms</td>
-                                <td class="num dim">7&ndash;15 ms</td>
+                                <td class="num">7 ms</td>
+                                <td class="num dim">6&ndash;8 ms</td>
                             </tr>
                             <tr>
                                 <td>
@@ -1324,13 +1327,13 @@
                                         >kind:struct SharedInformerFactory</code
                                     >
                                 </td>
-                                <td class="num">9 ms</td>
-                                <td class="num dim">8&ndash;18 ms</td>
+                                <td class="num">6 ms</td>
+                                <td class="num dim">6&ndash;7 ms</td>
                             </tr>
                             <tr>
                                 <td><code>kind:fn path:pkg/ init</code></td>
-                                <td class="num">15 ms</td>
-                                <td class="num dim">13&ndash;20 ms</td>
+                                <td class="num">12 ms</td>
+                                <td class="num dim">11&ndash;13 ms</td>
                             </tr>
                             <tr>
                                 <td>
@@ -1339,13 +1342,13 @@
                                         qname:HollowKubelet::Run</code
                                     >
                                 </td>
-                                <td class="num">8 ms</td>
-                                <td class="num dim">8&ndash;17 ms</td>
+                                <td class="num">6 ms</td>
+                                <td class="num dim">6&ndash;8 ms</td>
                             </tr>
                             <tr>
                                 <td><code>kind:fn validate webhook</code></td>
-                                <td class="num">10 ms</td>
-                                <td class="num dim">8&ndash;24 ms</td>
+                                <td class="num">7 ms</td>
+                                <td class="num dim">6&ndash;7 ms</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1382,21 +1385,21 @@
                         <tbody>
                             <tr>
                                 <td><code>func\s+\w+Handler</code></td>
-                                <td class="num">15 ms</td>
-                                <td class="num">366 ms</td>
-                                <td class="num speedup">24x</td>
+                                <td class="num">10 ms</td>
+                                <td class="num">392 ms</td>
+                                <td class="num speedup">38x</td>
                             </tr>
                             <tr>
                                 <td><code>interface\s*\{</code></td>
-                                <td class="num">11 ms</td>
-                                <td class="num">398 ms</td>
-                                <td class="num speedup">36x</td>
+                                <td class="num">9 ms</td>
+                                <td class="num">415 ms</td>
+                                <td class="num speedup">46x</td>
                             </tr>
                             <tr>
                                 <td><code>context\.Context</code></td>
                                 <td class="num">12 ms</td>
-                                <td class="num">384 ms</td>
-                                <td class="num speedup">31x</td>
+                                <td class="num">422 ms</td>
+                                <td class="num speedup">34x</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1445,7 +1448,7 @@
                                 </div>
                                 <pre
                                     class="modes-pre"
-                                ><span class="modes-prompt">$</span> rg "func \(.*Authorization.*\) Validate"          <span class="dim">333&ndash;622 ms</span></pre>
+                                ><span class="modes-prompt">$</span> rg "func \(.*Authorization.*\) Validate"          <span class="dim">522 ms</span></pre>
                             </div>
                             <div class="modes-divider"></div>
                             <div class="modes-section">
@@ -1454,7 +1457,7 @@
                                 </div>
                                 <pre
                                     class="modes-pre"
-                                ><span class="modes-prompt">$</span> collie search <span class="blue">"kind:method path:pkg/kubeapiserver/options/ %validate%"</span>  <span class="accent">78 ms</span></pre>
+                                ><span class="modes-prompt">$</span> collie search <span class="blue">"kind:method path:pkg/kubeapiserver/options/ %validate%"</span>  <span class="accent">72 ms</span></pre>
                             </div>
                         </div>
                     </div>
@@ -1497,24 +1500,24 @@
                                     Methods on <code>*Server</code> ending in
                                     <code>Handler</code>
                                 </td>
-                                <td class="num speedup">50 ms</td>
-                                <td class="num dim">620 ms</td>
-                                <td class="num speedup">12x</td>
+                                <td class="num speedup">70 ms</td>
+                                <td class="num dim">406 ms</td>
+                                <td class="num speedup">5.8x</td>
                             </tr>
                             <tr>
                                 <td>
                                     Methods on <code>Server</code> containing
                                     <code>Handler</code>
                                 </td>
-                                <td class="num speedup">&lt;10 ms</td>
-                                <td class="num dim">340 ms</td>
-                                <td class="num speedup">34x+</td>
+                                <td class="num speedup">7 ms</td>
+                                <td class="num dim">404 ms</td>
+                                <td class="num speedup">54x</td>
                             </tr>
                             <tr>
                                 <td>Validate functions related to webhooks</td>
-                                <td class="num speedup">130 ms</td>
-                                <td class="num dim">350 ms</td>
-                                <td class="num speedup">2.7x</td>
+                                <td class="num speedup">281 ms</td>
+                                <td class="num dim">373 ms</td>
+                                <td class="num speedup">1.3x</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1568,33 +1571,33 @@
                         <tbody>
                             <tr>
                                 <td>Find HollowKubelet::Run</td>
-                                <td class="num speedup">24 ms</td>
+                                <td class="num speedup">43 ms</td>
                                 <td class="num speedup">23 ms</td>
-                                <td class="num dim">697 ms</td>
+                                <td class="num dim">730 ms</td>
                             </tr>
                             <tr>
                                 <td>Webhook token authenticator</td>
-                                <td class="num speedup">152 ms</td>
-                                <td class="num speedup">87 ms</td>
-                                <td class="num dim">480 ms</td>
+                                <td class="num speedup">95 ms</td>
+                                <td class="num speedup">36 ms</td>
+                                <td class="num dim">548 ms</td>
                             </tr>
                             <tr>
                                 <td>Authorization options validator</td>
-                                <td class="num speedup">78 ms</td>
-                                <td class="num speedup">24 ms</td>
-                                <td class="num dim">441 ms</td>
+                                <td class="num speedup">72 ms</td>
+                                <td class="num speedup">19 ms</td>
+                                <td class="num dim">522 ms</td>
                             </tr>
                             <tr>
                                 <td>SharedInformerFactory constructor</td>
-                                <td class="num speedup">87 ms</td>
-                                <td class="num speedup">57 ms</td>
-                                <td class="num dim">399 ms</td>
+                                <td class="num speedup">111 ms</td>
+                                <td class="num speedup">27 ms</td>
+                                <td class="num dim">398 ms</td>
                             </tr>
                             <tr>
                                 <td>PodDisruptionBudget validator</td>
-                                <td class="num speedup">77 ms</td>
-                                <td class="num speedup">32 ms</td>
-                                <td class="num dim">370 ms</td>
+                                <td class="num speedup">69 ms</td>
+                                <td class="num speedup">176 ms</td>
+                                <td class="num dim">373 ms</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1633,7 +1636,8 @@
                                 <div class="agent-point-key">Latency</div>
                                 <div class="agent-point-val">
                                     Agents run hundreds of searches per session.
-                                    13ms vs 350&ndash;880ms compounds.
+                                    ~7&ndash;12ms vs 400&ndash;880ms
+                                    compounds.
                                 </div>
                             </div>
                         </div>
@@ -1718,7 +1722,7 @@
                                 >
                                 <span class="arch-what"
                                     >Parallel indexing &rarr; 29K files in
-                                    7.5s</span
+                                    8.7s</span
                                 >
                             </div>
                             <div class="arch-arrow">&darr;</div>
@@ -1799,10 +1803,10 @@
                                 <td><strong>Kubernetes</strong></td>
                                 <td class="num">28,903</td>
                                 <td class="num accent">
-                                    <strong>7.5s</strong>
+                                    <strong>8.7s</strong>
                                 </td>
-                                <td class="num">214 MB</td>
-                                <td class="num">534 MB</td>
+                                <td class="num">391 MB</td>
+                                <td class="num">&mdash;</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1878,7 +1882,7 @@
                     </div>
                     <div class="stat-row">
                         <div class="stat-box">
-                            <div class="num">27&ndash;67x</div>
+                            <div class="num">48&ndash;88x</div>
                             <div class="label">
                                 faster on bounded lexical queries
                             </div>
@@ -1888,7 +1892,7 @@
                             <div class="label">languages</div>
                         </div>
                         <div class="stat-box">
-                            <div class="num">13ms</div>
+                            <div class="num">~10ms</div>
                             <div class="label">bounded search latency</div>
                         </div>
                     </div>
